@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import List
 from uuid import uuid4
 
 import cv2
+import httpx
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
@@ -26,6 +28,8 @@ OUTPUT_DIR = Path(os.getenv("PANORAMA_OUTPUT_DIR", str(default_output_dir)))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_TOTAL_BYTES = 120 * 1024 * 1024
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "dpnsayn8m")
+CLOUDINARY_UPLOAD_PRESET = os.getenv("CLOUDINARY_UPLOAD_PRESET", "libot_uploads")
 
 
 class StripVercelServicePrefix:
@@ -103,6 +107,25 @@ async def read_uploaded_images(files: List[UploadFile]) -> tuple[list[np.ndarray
         images.append(image)
         filenames.append(upload.filename or f"Image {index}")
     return images, filenames
+
+
+async def upload_generated_image(contents: bytes, filename: str, content_type: str) -> str:
+    """Persist a generated tour asset outside the serverless filesystem."""
+    upload_url = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/image/upload"
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            response = await client.post(
+                upload_url,
+                data={"upload_preset": CLOUDINARY_UPLOAD_PRESET, "folder": "libot/virtual-tours"},
+                files={"file": (filename, contents, content_type)},
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail="Persistent image storage rejected the generated tour asset.") from error
+    secure_url = response.json().get("secure_url")
+    if not isinstance(secure_url, str) or not secure_url.startswith("https://"):
+        raise HTTPException(status_code=502, detail="Persistent image storage did not return a valid URL.")
+    return secure_url
 
 
 @app.post("/validate")
@@ -191,18 +214,23 @@ async def reconstruct_hybrid(
     identifier = uuid4().hex
     panorama_name = f"hybrid-{identifier}.jpg"
     mask_name = f"hybrid-{identifier}-ai-mask.png"
-    panorama_saved, mask_saved = await run_in_threadpool(
+    panorama_encoded, mask_encoded = await run_in_threadpool(
         lambda: (
-            cv2.imwrite(str(OUTPUT_DIR / panorama_name), panorama, [cv2.IMWRITE_JPEG_QUALITY, 95]),
-            cv2.imwrite(str(OUTPUT_DIR / mask_name), generated_mask),
+            cv2.imencode(".jpg", panorama, [cv2.IMWRITE_JPEG_QUALITY, 95]),
+            cv2.imencode(".png", generated_mask),
         )
     )
-    if not panorama_saved or not mask_saved:
-        raise HTTPException(status_code=500, detail="The panorama or disclosure mask could not be saved.")
+    if not panorama_encoded[0] or not mask_encoded[0]:
+        raise HTTPException(status_code=500, detail="The panorama or disclosure mask could not be encoded.")
+    panorama_url, mask_url = await asyncio.gather(
+        upload_generated_image(panorama_encoded[1].tobytes(), panorama_name, "image/jpeg"),
+        upload_generated_image(mask_encoded[1].tobytes(), mask_name, "image/png"),
+    )
     return {
         "success": True,
-        "panorama_url": f"/outputs/{panorama_name}",
-        "ai_mask_url": f"/outputs/{mask_name}",
+        "panorama_url": panorama_url,
+        "ai_mask_url": mask_url,
+        "storage": "cloudinary",
         "metadata": metadata,
     }
 

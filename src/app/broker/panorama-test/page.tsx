@@ -24,7 +24,7 @@ import {
 import PanoramaViewer from "@/components/PanoramaViewer";
 import PhoneCameraCapture from "@/components/PhoneCameraCapture";
 import { auth, db } from "@/lib/firebase";
-import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { isRemoteImageUrl, uploadImageToCloudinary } from "@/lib/cloudinary";
 import { reconstructHybridPanorama, type HybridMetadata } from "@/lib/panorama-api";
 
 type StitchMetrics = Partial<HybridMetadata> & { output_width: number; output_height: number; processing_ms?: number; coverage_ratio?: number };
@@ -87,6 +87,7 @@ export default function CreateVirtualTourPage() {
   const [algorithm, setAlgorithm] = useState<"orb" | "sift">("orb");
   const [ransacThreshold, setRansacThreshold] = useState(4);
   const [files, setFiles] = useState<File[]>([]);
+  const [sourceImageUrls, setSourceImageUrls] = useState<string[]>([]);
   const [validations, setValidations] = useState<Validation[]>([]);
   const [pairValidations, setPairValidations] = useState<PairValidation[]>([]);
   const [validating, setValidating] = useState(false);
@@ -174,6 +175,7 @@ export default function CreateVirtualTourPage() {
     setMetrics(null);
     setPublished(false);
     setFiles(selected);
+    setSourceImageUrls([]);
     await validateFiles(selected, algorithm);
   };
 
@@ -201,6 +203,11 @@ export default function CreateVirtualTourPage() {
     setError("");
     setPublished(false);
     try {
+      let persistedSourceUrls = sourceImageUrls;
+      if (persistedSourceUrls.length !== files.length) {
+        persistedSourceUrls = await Promise.all(files.map((file) => uploadImageToCloudinary(file)));
+        setSourceImageUrls(persistedSourceUrls);
+      }
       const result = await reconstructHybridPanorama(files, { algorithm, ransacThreshold, fillGaps: true });
       setPanorama(result.panoramaUrl);
       setAiMaskUrl(result.aiMaskUrl);
@@ -222,14 +229,14 @@ export default function CreateVirtualTourPage() {
         const data = item.data();
         return data.brokerId === brokerId && String(data.roomType ?? "").trim().toLowerCase() === roomType.trim().toLowerCase();
       });
-      const response = await fetch(panorama);
-      if (!response.ok) throw new Error("The generated panorama could not be retrieved.");
-      const blob = await response.blob();
       const safeRoomName = roomType.trim().replace(/\s+/g, "-").toLowerCase();
-      const [panoramaUrl, sourceImageUrls, aiGeneratedMaskUrl] = await Promise.all([
-        uploadImageToCloudinary(new File([blob], `${safeRoomName}-360.jpg`, { type: "image/jpeg" })),
-        Promise.all(files.map((file) => uploadImageToCloudinary(file))),
-        aiMaskUrl ? fetch(aiMaskUrl).then(async (maskResponse) => {
+      const [panoramaUrl, persistedSourceUrls, aiGeneratedMaskUrl] = await Promise.all([
+        isRemoteImageUrl(panorama) ? Promise.resolve(panorama) : fetch(panorama).then(async (response) => {
+          if (!response.ok) throw new Error("The generated panorama could not be retrieved.");
+          return uploadImageToCloudinary(new File([await response.blob()], `${safeRoomName}-360.jpg`, { type: "image/jpeg" }));
+        }),
+        sourceImageUrls.length === files.length ? Promise.resolve(sourceImageUrls) : Promise.all(files.map((file) => uploadImageToCloudinary(file))),
+        isRemoteImageUrl(aiMaskUrl) ? Promise.resolve(aiMaskUrl) : aiMaskUrl ? fetch(aiMaskUrl).then(async (maskResponse) => {
           if (!maskResponse.ok) throw new Error("The AI disclosure mask could not be retrieved.");
           return uploadImageToCloudinary(new File([await maskResponse.blob()], `${safeRoomName}-ai-mask.png`, { type: "image/png" }));
         }) : Promise.resolve(""),
@@ -243,8 +250,8 @@ export default function CreateVirtualTourPage() {
         algorithm: algorithm.toUpperCase(),
         metrics,
         sourceImageCount: files.length,
-        sourceImageUrls,
-        sourceImages: sourceImageUrls.map((url, index) => ({
+        sourceImageUrls: persistedSourceUrls,
+        sourceImages: persistedSourceUrls.map((url, index) => ({
           angle: CAPTURE_STEPS[index].id,
           label: CAPTURE_STEPS[index].label,
           order: index + 1,
@@ -283,7 +290,7 @@ export default function CreateVirtualTourPage() {
   };
 
   const reset = () => {
-    setFiles([]); setValidations([]); setPairValidations([]); setPanorama(""); setAiMaskUrl(""); setMetrics(null); setPublished(false); setError(""); setRoomType(""); setLastCaptureHeading(null);
+    setFiles([]); setSourceImageUrls([]); setValidations([]); setPairValidations([]); setPanorama(""); setAiMaskUrl(""); setMetrics(null); setPublished(false); setError(""); setRoomType(""); setLastCaptureHeading(null);
   };
 
   return (

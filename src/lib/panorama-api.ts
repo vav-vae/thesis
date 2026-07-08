@@ -61,6 +61,8 @@ export type HybridReconstruction = {
 const API_URL = process.env.NEXT_PUBLIC_PANORAMA_API_URL
   || (process.env.NODE_ENV === "production" ? "/api/backend" : "http://127.0.0.1:8000");
 
+const resolveAssetUrl = (value: string) => /^https:\/\//i.test(value) ? value : `${API_URL}${value}`;
+
 export async function reconstructHybridPanorama(
   files: File[],
   options: { algorithm: "orb" | "sift"; ransacThreshold: number; fillGaps?: boolean },
@@ -74,8 +76,8 @@ export async function reconstructHybridPanorama(
   const data = await response.json();
   if (!response.ok || !data.success) throw new Error(data.detail || "Hybrid panorama reconstruction failed.");
   return {
-    panoramaUrl: `${API_URL}${data.panorama_url}`,
-    aiMaskUrl: `${API_URL}${data.ai_mask_url}`,
+    panoramaUrl: resolveAssetUrl(data.panorama_url),
+    aiMaskUrl: resolveAssetUrl(data.ai_mask_url),
     metadata: data.metadata,
   };
 }
