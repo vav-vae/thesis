@@ -29,7 +29,10 @@ export default function PhoneCameraCapture({ imageNumber, previousHeading, onCap
   const [heading, setHeading] = useState<number | null>(null);
   const [motionEnabled, setMotionEnabled] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
+  const [cameraFrameLandscape, setCameraFrameLandscape] = useState(false);
+  const [landscapeOverride, setLandscapeOverride] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const landscapeReady = isLandscape || cameraFrameLandscape || landscapeOverride;
 
   const targetHeading = previousHeading == null ? null : normalizeHeading(previousHeading + 45);
   const turn = heading != null && targetHeading != null ? shortestTurn(heading, targetHeading) : null;
@@ -43,13 +46,29 @@ export default function PhoneCameraCapture({ imageNumber, previousHeading, onCap
 
   useEffect(() => {
     const orientationQuery = window.matchMedia("(orientation: landscape)");
-    const updateOrientation = () => setIsLandscape(orientationQuery.matches);
+    const updateOrientation = () => {
+      const legacyAngle = (window as Window & { orientation?: number }).orientation;
+      const screenAngle = screen.orientation?.angle;
+      setIsLandscape(
+        orientationQuery.matches
+        || window.innerWidth > window.innerHeight
+        || Math.abs(legacyAngle ?? 0) === 90
+        || screenAngle === 90
+        || screenAngle === 270
+      );
+    };
     const updateFullscreen = () => setIsFullscreen(document.fullscreenElement === dialogRef.current);
     updateOrientation();
     orientationQuery.addEventListener("change", updateOrientation);
+    window.addEventListener("resize", updateOrientation);
+    window.addEventListener("orientationchange", updateOrientation);
+    window.visualViewport?.addEventListener("resize", updateOrientation);
     document.addEventListener("fullscreenchange", updateFullscreen);
     return () => {
       orientationQuery.removeEventListener("change", updateOrientation);
+      window.removeEventListener("resize", updateOrientation);
+      window.removeEventListener("orientationchange", updateOrientation);
+      window.visualViewport?.removeEventListener("resize", updateOrientation);
       document.removeEventListener("fullscreenchange", updateFullscreen);
     };
   }, []);
@@ -123,7 +142,7 @@ export default function PhoneCameraCapture({ imageNumber, previousHeading, onCap
   const capture = async () => {
     const video = videoRef.current;
     if (!video || !video.videoWidth || !video.videoHeight || saving) return;
-    if (!isLandscape) {
+    if (!landscapeReady) {
       setError("Rotate your phone to landscape before capturing.");
       return;
     }
@@ -131,7 +150,7 @@ export default function PhoneCameraCapture({ imageNumber, previousHeading, onCap
     setError("");
     try {
       const canvas = document.createElement("canvas");
-      const rotateLandscapeFrame = isLandscape && video.videoHeight > video.videoWidth;
+      const rotateLandscapeFrame = landscapeReady && video.videoHeight > video.videoWidth;
       canvas.width = rotateLandscapeFrame ? video.videoHeight : video.videoWidth;
       canvas.height = rotateLandscapeFrame ? video.videoWidth : video.videoHeight;
       const context = canvas.getContext("2d");
@@ -182,7 +201,7 @@ export default function PhoneCameraCapture({ imageNumber, previousHeading, onCap
           <div className="flex gap-2"><button type="button" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"} className="rounded-full bg-white/10 p-2 hover:bg-white/20">{isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}</button><button type="button" onClick={close} aria-label="Close camera" className="rounded-full bg-white/10 p-2 hover:bg-white/20"><X size={20} /></button></div>
         </div>
         <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
-          <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
+          <video ref={videoRef} playsInline muted onLoadedMetadata={(event) => setCameraFrameLandscape(event.currentTarget.videoWidth > event.currentTarget.videoHeight)} className="h-full w-full object-cover" />
           {starting && <div className="absolute inset-0 flex items-center justify-center"><LoaderCircle className="animate-spin text-blue-300" size={32} /></div>}
           <div className="pointer-events-none absolute inset-y-0 left-1/4 border-l border-dashed border-white/35" />
           <div className="pointer-events-none absolute inset-y-0 right-1/4 border-r border-dashed border-white/35" />
@@ -192,7 +211,8 @@ export default function PhoneCameraCapture({ imageNumber, previousHeading, onCap
           </div>
         </div>
         <div className="shrink-0 p-3 sm:p-5">
-          <p className={`text-center text-sm font-medium ${isLandscape ? "text-emerald-300" : "text-amber-200"}`}>{isLandscape ? "Landscape detected — keep the phone steady." : "Rotate your phone to landscape before capturing."}</p>
+          <p className={`text-center text-sm font-medium ${landscapeReady ? "text-emerald-300" : "text-amber-200"}`}>{landscapeReady ? "Landscape ready — keep the phone steady." : "Rotate your phone to landscape before capturing."}</p>
+          {!landscapeReady && <button type="button" onClick={() => setLandscapeOverride(true)} className="mx-auto mt-2 flex rounded-lg border border-amber-300/40 bg-amber-300/10 px-3 py-1.5 text-xs font-semibold text-amber-100">I’m holding it landscape</button>}
           <p className="mt-1 text-center text-xs text-white/60 sm:text-sm">Remain in one position and keep 30–50% of the previous view inside the guide lines.</p>
           {!motionEnabled && <button type="button" onClick={() => void enableMotionGuide()} className="mx-auto mt-3 flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/20"><Compass size={17} />Enable angle guide</button>}
           {motionEnabled && heading == null && <p className="mt-3 text-center text-xs text-amber-200">Move the phone gently to initialize its orientation sensor.</p>}
@@ -200,7 +220,7 @@ export default function PhoneCameraCapture({ imageNumber, previousHeading, onCap
           {error && <p role="alert" className="mt-3 rounded-xl bg-red-500/15 p-3 text-center text-sm text-red-200">{error}</p>}
           <div className="mt-5 flex justify-center gap-3">
             <button type="button" onClick={close} className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-5 py-3 text-sm font-semibold"><RotateCcw size={18} />Cancel</button>
-            <button type="button" onClick={() => void capture()} disabled={starting || saving || Boolean(error) || !isLandscape || (motionEnabled && !angleReady)} className={`inline-flex items-center gap-2 rounded-xl px-7 py-3 text-sm font-semibold disabled:opacity-40 ${isLandscape && angleReady ? "bg-emerald-600" : "bg-red-600"}`}>{saving ? <LoaderCircle className="animate-spin" size={18} /> : <Camera size={18} />}{saving ? "Saving…" : !isLandscape ? "Rotate phone" : angleReady ? "Capture" : "Align angle"}</button>
+            <button type="button" onClick={() => void capture()} disabled={starting || saving || Boolean(error) || !landscapeReady || (motionEnabled && !angleReady)} className={`inline-flex items-center gap-2 rounded-xl px-7 py-3 text-sm font-semibold disabled:opacity-40 ${landscapeReady && angleReady ? "bg-emerald-600" : "bg-red-600"}`}>{saving ? <LoaderCircle className="animate-spin" size={18} /> : <Camera size={18} />}{saving ? "Saving…" : !landscapeReady ? "Rotate phone" : angleReady ? "Capture" : "Align angle"}</button>
           </div>
         </div>
       </div>
