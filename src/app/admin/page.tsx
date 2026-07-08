@@ -83,10 +83,26 @@ type PropertyListing = {
   title?: string;
   description?: string;
   price?: string | number;
+  currency?: string;
   location?: string;
+  latitude?: number;
+  longitude?: number;
   brokerId?: string;
+  propertyType?: string;
+  beds?: number;
+  baths?: number;
+  amenities?: string[];
+  availabilityStatus?: string;
+  image?: string;
+  imageUrls?: string[];
   status?: string;
   createdAt?: Timestamp | Date | { toDate?: () => Date };
+  updatedAt?: Timestamp | Date | { toDate?: () => Date };
+};
+
+type RoomImageRecord = {
+  propertyId?: string;
+  imageUrls?: string[];
 };
 
 type ReportRecord = {
@@ -178,13 +194,27 @@ export default function AdminPage() {
     setLoadingData(true);
     setActionError("");
     try {
-      const [userSnapshot, propertySnapshot, reportSnapshot] = await Promise.all([
+      const [userSnapshot, propertySnapshot, reportSnapshot, roomImageSnapshot] = await Promise.all([
         getDocs(collection(db, "users")),
         getDocs(collection(db, "properties")),
         getDocs(collection(db, "reports")),
+        getDocs(collection(db, "roomImages")).catch((error) => {
+          console.warn("Unable to load legacy property image fallbacks:", error);
+          return null;
+        }),
       ]);
+      const firstImageByProperty = new Map<string, string>();
+      roomImageSnapshot?.docs.forEach((item) => {
+        const room = item.data() as RoomImageRecord;
+        const firstImage = room.imageUrls?.find(isRemoteImageUrl);
+        if (room.propertyId && firstImage && !firstImageByProperty.has(room.propertyId)) firstImageByProperty.set(room.propertyId, firstImage);
+      });
       setUsers(userSnapshot.docs.map((item) => ({ id: item.id, ...item.data() } as PlatformUser)));
-      setProperties(propertySnapshot.docs.map((item) => ({ id: item.id, ...item.data() } as PropertyListing)));
+      setProperties(propertySnapshot.docs.map((item) => {
+        const property = { id: item.id, ...item.data() } as PropertyListing;
+        const storedCover = isRemoteImageUrl(property.image) ? property.image : property.imageUrls?.find(isRemoteImageUrl);
+        return { ...property, image: storedCover || firstImageByProperty.get(item.id) };
+      }));
       setReports(reportSnapshot.docs.map((item) => ({ id: item.id, ...item.data() } as ReportRecord)));
     } catch (error) {
       console.error("Unable to load admin data:", error);
@@ -577,7 +607,7 @@ function VerificationQueue({ brokers, search, onSearch, onReview }: { brokers: P
 }
 
 function PropertyManagement({ properties, onView, onToggleArchive, onRemove, actionId }: { properties: PropertyListing[]; onView: (property: PropertyListing) => void; onToggleArchive: (property: PropertyListing) => void; onRemove: (property: PropertyListing) => void; actionId: string | null }) {
-  return <section className="rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="p-6"><h2 className="text-xl font-semibold">All property listings</h2><p className="mt-1 text-sm text-slate-500">Review, archive, reactivate, or remove listings across LiBot.</p></div><div className="grid gap-4 border-t border-slate-200 p-5 md:grid-cols-2 xl:grid-cols-3">{properties.map((property) => <article key={property.id} className="overflow-hidden rounded-2xl border border-slate-200"><div className="flex h-36 items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200"><House size={35} className="text-slate-400" /></div><div className="p-5"><div className="flex items-start justify-between gap-3"><h3 className="font-semibold">{property.title || "Untitled property"}</h3><span className={`rounded-full px-2 py-1 text-xs font-semibold ${property.status === "archived" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{property.status || "active"}</span></div><p className="mt-2 text-sm text-slate-500">{property.location || "No location"}</p><p className="mt-3 text-lg font-semibold">₱{property.price || "Not provided"}</p><div className="mt-5 flex flex-wrap gap-2"><button onClick={() => onView(property)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold">Details</button><button onClick={() => onToggleArchive(property)} disabled={actionId === property.id} className={`rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${property.status === "archived" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600"}`}>{actionId === property.id ? "Updating..." : property.status === "archived" ? "Activate" : "Archive"}</button><button onClick={() => onRemove(property)} disabled={actionId === property.id} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40">Remove</button></div></div></article>)}{properties.length === 0 && <div className="md:col-span-2 xl:col-span-3"><EmptyState message="No property listings found." /></div>}</div></section>;
+  return <section className="rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="p-6"><h2 className="text-xl font-semibold">All property listings</h2><p className="mt-1 text-sm text-slate-500">Select a property to review its complete listing information.</p></div><div className="grid gap-4 border-t border-slate-200 p-5 md:grid-cols-2 xl:grid-cols-3">{properties.map((property) => <article key={property.id} className="overflow-hidden rounded-2xl border border-slate-200 transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md"><button type="button" onClick={() => onView(property)} className="block w-full text-left"><div className="flex h-44 items-center justify-center overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200">{isRemoteImageUrl(property.image) ? <img src={property.image} alt={`${property.title || "Property"} cover`} className="h-full w-full object-cover" /> : <House size={35} className="text-slate-400" />}</div><div className="p-5"><div className="flex items-start justify-between gap-3"><h3 className="font-semibold">{property.title || "Untitled property"}</h3><span className={`rounded-full px-2 py-1 text-xs font-semibold ${property.status === "archived" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{property.status || "active"}</span></div><p className="mt-2 line-clamp-1 text-sm text-slate-500">{property.location || "No location"}</p><div className="mt-3 flex items-end justify-between gap-3"><p className="text-lg font-semibold">₱{property.price || "Not provided"}</p><span className="text-xs font-semibold text-blue-600">View full details →</span></div></div></button><div className="flex flex-wrap gap-2 border-t border-slate-200 px-5 py-4"><button onClick={() => onToggleArchive(property)} disabled={actionId === property.id} className={`rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40 ${property.status === "archived" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600"}`}>{actionId === property.id ? "Updating..." : property.status === "archived" ? "Activate" : "Archive"}</button><button onClick={() => onRemove(property)} disabled={actionId === property.id} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-40">Remove</button></div></article>)}{properties.length === 0 && <div className="md:col-span-2 xl:col-span-3"><EmptyState message="No property listings found." /></div>}</div></section>;
 }
 
 function ReportManagement({ reports, users, actionId, onStatus, onDeactivate }: { reports: ReportRecord[]; users: PlatformUser[]; actionId: string | null; onStatus: (report: ReportRecord, status: "in_review" | "resolved" | "dismissed") => void; onDeactivate: (report: ReportRecord) => void }) {
@@ -724,7 +754,7 @@ function BrokerReviewModal({ broker, reason, onReason, onClose, onApprove, onRej
 }
 
 function PropertyModal({ property, onClose, onRemove, working }: { property: PropertyListing; onClose: () => void; onRemove: () => void; working: boolean }) {
-  return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl"><div className="flex items-start justify-between"><div><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Property details</p><h2 className="mt-2 text-2xl font-semibold">{property.title || "Untitled property"}</h2></div><button onClick={onClose}><X size={21} /></button></div><div className="mt-6 space-y-4"><InfoBox label="Location" value={property.location || "Not provided"} /><InfoBox label="Price" value={`₱${property.price || "Not provided"}`} /><InfoBox label="Broker ID" value={property.brokerId || "Not provided"} /><InfoBox label="Created" value={formatDate(property.createdAt)} /><div><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Description</p><p className="mt-2 text-sm leading-6 text-slate-600">{property.description || "No description"}</p></div></div><button onClick={onRemove} disabled={working} className="mt-7 inline-flex items-center gap-2 rounded-full bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 disabled:opacity-50"><Trash2 size={16} />{working ? "Removing..." : "Remove listing"}</button></div></div>;
+  return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-4"><div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl sm:max-h-[92vh]"><div className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-5 py-4 sm:px-7 sm:py-5"><div><p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Complete property details</p><h2 className="mt-1 text-2xl font-semibold">{property.title || "Untitled property"}</h2></div><button onClick={onClose} aria-label="Close property details" className="rounded-full p-2 hover:bg-slate-100"><X size={21} /></button></div>{isRemoteImageUrl(property.image) ? <div className="h-56 overflow-hidden bg-slate-100 sm:h-80"><img src={property.image} alt={`${property.title || "Property"} cover`} className="h-full w-full object-cover" /></div> : <div className="flex h-44 items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200"><House size={45} className="text-slate-400" /></div>}<div className="space-y-7 p-5 sm:p-7"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><InfoBox label="Price" value={`${property.currency === "PHP" || !property.currency ? "₱" : `${property.currency} `}${property.price || "Not provided"}`} /><InfoBox label="Property type" value={property.propertyType || "Not provided"} /><InfoBox label="Bedrooms" value={property.beds == null ? "Not provided" : String(property.beds)} /><InfoBox label="Bathrooms" value={property.baths == null ? "Not provided" : String(property.baths)} /></div><div className="grid gap-4 sm:grid-cols-2"><InfoBox label="Listing status" value={property.status || "active"} /><InfoBox label="Availability" value={property.availabilityStatus || "Not provided"} /><InfoBox label="Created" value={formatDate(property.createdAt)} /><InfoBox label="Last updated" value={formatDate(property.updatedAt)} /></div><section><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Location</p><p className="mt-2 text-sm font-medium text-slate-800">{property.location || "Not provided"}</p>{typeof property.latitude === "number" && typeof property.longitude === "number" && <a href={`https://www.openstreetmap.org/?mlat=${property.latitude}&mlon=${property.longitude}#map=17/${property.latitude}/${property.longitude}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-semibold text-blue-600">{property.latitude.toFixed(6)}, {property.longitude.toFixed(6)} · Open map →</a>}</section><section><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Description</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{property.description || "No description provided."}</p></section><section><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Amenities</p>{property.amenities?.length ? <div className="mt-3 flex flex-wrap gap-2">{property.amenities.map((amenity) => <span key={amenity} className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">{amenity}</span>)}</div> : <p className="mt-2 text-sm text-slate-500">No amenities listed.</p>}</section><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Broker ID</p><p className="mt-2 break-all text-sm text-slate-700">{property.brokerId || "Not provided"}</p></div><div className="flex justify-end gap-3 border-t border-slate-200 pt-5"><button onClick={onClose} className="rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600">Close</button><button onClick={onRemove} disabled={working} className="inline-flex items-center gap-2 rounded-full bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 disabled:opacity-50"><Trash2 size={16} />{working ? "Removing..." : "Remove listing"}</button></div></div></div></div>;
 }
 
 function PanelHeader({ title, search, onSearch }: { title: string; search: string; onSearch: (value: string) => void }) {

@@ -157,7 +157,7 @@ export default function LoginPage() {
         <div className="relative z-10">
           {/* Logo */}
           <div className="flex items-center gap-3 mb-16">
-            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center flex-shrink-0">
+            <div className="theme-preserve-light w-12 h-12 bg-white rounded-2xl flex items-center justify-center flex-shrink-0">
               <img
                 src="/logo.png"
                 alt="LiBot Logo"

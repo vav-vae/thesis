@@ -2,6 +2,7 @@ import "./globals.css";
 import "leaflet/dist/leaflet.css";
 import { ReactNode } from "react";
 import AccountStatusGuard from "@/components/AccountStatusGuard";
+import ThemeController from "@/components/ThemeController";
 
 export const metadata = {
   title: "LiBot - AI-Powered Virtual Tours",
@@ -14,10 +15,11 @@ export default function RootLayout({
   children: ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="bg-[#111111] text-white antialiased">
+    <html lang="en" suppressHydrationWarning>
+      <body className="antialiased">
         <AccountStatusGuard />
         {children}
+        <ThemeController />
       </body>
     </html>
   );
