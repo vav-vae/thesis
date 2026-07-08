@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -159,13 +158,12 @@ export default function LoginPage() {
           {/* Logo */}
           <div className="flex items-center gap-3 mb-16">
             <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center flex-shrink-0">
-              <Image
+              <img
                 src="/logo.png"
                 alt="LiBot Logo"
                 width={40}
                 height={40}
                 className="object-contain"
-                priority
               />
             </div>
             <div>
@@ -202,13 +200,12 @@ export default function LoginPage() {
           {/* Mobile Logo */}
           <div className="lg:hidden mb-10 inline-flex items-center gap-2">
             <div className="w-10 h-10 bg-slate-900 rounded-2xl flex items-center justify-center">
-              <Image
+              <img
                 src="/logo.png"
                 alt="LiBot Logo"
                 width={32}
                 height={32}
                 className="object-contain"
-                priority
               />
             </div>
             <div>
