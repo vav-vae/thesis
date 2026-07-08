@@ -1,0 +1,10 @@
+.git
+.next
+.vscode
+backend/venv
+backend/__pycache__
+backend/services/__pycache__
+backend/outputs
+test image
+Thesis Papers
+*.docx

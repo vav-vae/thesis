@@ -23,6 +23,18 @@
 # misc
 .DS_Store
 *.pem
+.vscode/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+backend/outputs/
+backend/venv/
+
+# Local reconstruction inputs and office files
+test image/
+Thesis Papers/
+*.docx
 
 # debug
 npm-debug.log*
