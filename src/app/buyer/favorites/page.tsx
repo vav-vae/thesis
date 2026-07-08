@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onSnapshot, collection } from "firebase/firestore";
@@ -61,7 +60,7 @@ export default function BuyerFavoritesPage() {
   return <div className="min-h-screen bg-slate-50 text-slate-900">
     {sidebarOpen && <button aria-label="Close navigation" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" />}
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-      <div className="flex items-center gap-3 border-b border-slate-200 p-8"><div className="relative h-10 w-10"><Image src="/logo.png" alt="LiBot Logo" fill className="object-contain" /></div><div><p className="text-sm font-semibold">LiBot</p><p className="text-xs text-slate-500">Real Estate</p></div><button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto lg:hidden"><X size={20} /></button></div>
+      <div className="flex items-center gap-3 border-b border-slate-200 p-8"><div className="relative h-10 w-10"><img src="/logo.png" alt="LiBot Logo" className="h-full w-full object-contain" /></div><div><p className="text-sm font-semibold">LiBot</p><p className="text-xs text-slate-500">Real Estate</p></div><button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto lg:hidden"><X size={20} /></button></div>
       <nav className="flex-1 space-y-2 p-6">
         <NavLink href="/buyer" icon={Home} label="Dashboard" />
         <NavLink href="/buyer/properties" icon={Search} label="Browse Properties" />

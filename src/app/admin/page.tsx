@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import {
@@ -446,7 +445,7 @@ export default function AdminPage() {
       {sidebarOpen && <button aria-label="Close navigation" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-40 bg-slate-950/40 lg:hidden" />}
       <aside className={`fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-2rem))] flex-col border-r border-slate-200 bg-white shadow-xl transition-transform lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex h-24 items-center gap-3 border-b border-slate-200 px-7">
-          <div className="relative h-11 w-11"><Image src="/logo.png" alt="LiBot" fill className="object-contain" /></div>
+          <div className="relative h-11 w-11"><img src="/logo.png" alt="LiBot" className="h-full w-full object-contain" /></div>
           <div><p className="font-semibold">LiBot Admin</p><p className="text-xs text-slate-500">Platform operations</p></div>
           <button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto p-2 lg:hidden"><X size={20} /></button>
         </div>

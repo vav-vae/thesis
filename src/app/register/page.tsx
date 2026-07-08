@@ -2,7 +2,6 @@
 
 import { Suspense, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
 import {
@@ -349,13 +348,12 @@ function RegisterForm() {
         <div className="text-center mb-12 animate-fade-in">
           <div className="mb-6 inline-flex items-center justify-center gap-4">
             <div className="relative h-16 w-16 flex-shrink-0">
-              <Image
+              <img
                 src="/logo.png"
                 alt="LiBot Logo"
-                fill
-                sizes="64px"
-                className="object-contain"
-                priority
+                width={64}
+                height={64}
+                className="h-full w-full object-contain"
               />
             </div>
 

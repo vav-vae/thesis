@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { collection, onSnapshot, query, Timestamp, where } from "firebase/firestore";
@@ -126,11 +125,10 @@ export default function BrokerPage() {
           <div className="p-8 border-b border-slate-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 relative flex-shrink-0">
-                <Image
+                <img
                   src="/logo.png"
                   alt="LiBot Logo"
-                  fill
-                  className="object-contain"
+                  className="h-full w-full object-contain"
                 />
               </div>
               <div>
