@@ -1,0 +1,199 @@
+LiBot System Changes for Thesis Chapters 1 to 3
+Date prepared: July 9, 2026
+
+This document summarizes the major system updates implemented during the latest development cycle. The notes are written so they can be adapted into Chapter 1, Chapter 2, and Chapter 3 of the thesis paper.
+
+
+1. General System Overview
+
+LiBot was improved as a web-based real estate platform that supports three main user roles: buyer, broker, and administrator. The system now provides property browsing, property management, buyer favorites, negotiations, viewing schedules, notifications, account management, administrative monitoring, and virtual tour support.
+
+The application was implemented using Next.js for the frontend, Firebase Authentication for user access, Firestore for database storage, Cloudinary for image and virtual tour asset storage, and Vercel for production deployment. The system was also refined to improve performance, image reliability, access flow, and user experience across buyer, broker, and admin dashboards.
+
+
+2. Changes Relevant to Chapter 1: The Problem and Its Background
+
+The recent changes strengthen the purpose of the study by addressing practical problems in online real estate browsing. Traditional property listing systems often provide static information only, which may not be enough for buyers to evaluate a property before making an inquiry or scheduling a visit. LiBot responds to this gap by combining property listings, uploaded room images, virtual tour previews, negotiation tools, viewing schedules, and role-based dashboards in one platform.
+
+The system now better supports the following thesis problem areas:
+
+a. Limited property visualization
+
+The platform supports property images and virtual tours so buyers can inspect available listings before visiting physically. Image handling was improved to ensure property photos and logos display correctly across dashboards.
+
+b. Inefficient buyer and broker communication
+
+The negotiation module was updated so buyers can submit offers from the property details page. This creates a direct negotiation record between the buyer and the broker.
+
+c. Fragmented property management
+
+Brokers can manage their own listings, upload room images, set property availability, and publish virtual tours. This reduces the need for separate tools for property details, media, and communication.
+
+d. Need for administrative oversight
+
+The admin dashboard supports monitoring users, property listings, reports, and verification records. Admin property views were improved so uploaded property covers display more reliably.
+
+e. Need for deployable and accessible implementation
+
+The application was deployed to Vercel production, making the system accessible as a live web application rather than only a local prototype.
+
+
+3. Changes Relevant to Chapter 2: Review of Related Systems and Concepts
+
+The improvements connect the LiBot system to several common concepts in related literature and systems:
+
+a. Real estate listing platforms
+
+LiBot follows the common structure of real estate platforms by allowing property posting, browsing, filtering, favorites, and viewing property details. However, it extends the usual listing approach by integrating negotiation, viewing schedules, and virtual tour support.
+
+b. Role-based access control
+
+The system uses separate experiences for buyers, brokers, and administrators. Firebase Authentication is used to identify users, while role-based routing directs users to their correct dashboard.
+
+c. Cloud-based data storage
+
+Firestore is used to store users, properties, room images, negotiations, viewing schedules, notifications, reports, and virtual tour metadata. Cloudinary is used to persist uploaded images and generated virtual tour assets.
+
+d. Virtual property exploration
+
+The system supports reconstructed room tours and published virtual tour assets. This supports the idea that digital property previews can help buyers make better initial decisions before scheduling actual visits.
+
+e. Web application deployment
+
+The system was deployed using Vercel, which supports continuous deployment of the Next.js application. This makes the project accessible for demonstration, testing, and evaluation.
+
+
+4. Changes Relevant to Chapter 3: Methodology and System Development
+
+The following development activities can be described in the methodology chapter:
+
+a. Frontend development
+
+The user interface was improved across buyer, broker, and admin pages. Navigation, dashboards, property cards, listing details, favorites, negotiations, schedules, and notification areas were refined using Next.js components and responsive layouts.
+
+b. Database integration
+
+Firestore queries were improved to retrieve active properties, legacy properties without a status field, published room tours, recently viewed properties, room images, negotiations, notifications, and viewing schedules.
+
+c. Authentication and role handling
+
+Firebase Authentication was used to manage login, registration, and session detection. The application identifies the user role and redirects the user to the correct workspace: buyer, broker, or admin.
+
+d. Property listing and image handling
+
+The property image system was improved in two ways. First, property covers can be loaded directly from the property document when available. Second, if a property does not have a direct cover image, the system now falls back to the first available uploaded room image stored in the roomImages collection.
+
+Image rendering was also changed from Next.js image optimization to native browser image rendering for dynamic property images and logos. This avoids display problems caused by remote image host restrictions and ensures uploaded images from services such as Cloudinary or Firebase-based URLs can display more consistently.
+
+e. Recently viewed property feature
+
+The buyer dashboard now retrieves recently viewed property records and attempts to display the appropriate property cover. If the property document has no image, the system checks room image uploads and uses the first available uploaded room image.
+
+f. Negotiation feature
+
+The buyer property details page now supports submitting an offer to a broker. The system creates or updates a negotiation record and appends the buyer's offer message. The implementation was adjusted to avoid permission-sensitive reads that previously caused missing permission errors.
+
+g. Notification optimization
+
+Notification queries were limited to reduce unnecessary reads and improve dashboard efficiency. This helps the system load only the most relevant notification records.
+
+h. Property detail and virtual tour loading
+
+The property details page was improved so property data, room images, and room tours are loaded in parallel. This reduces waiting time and supports a better buyer browsing experience.
+
+i. Broker upload workflow
+
+Brokers can upload room images for selected properties. Uploaded images are stored in Cloudinary and referenced in Firestore. The first uploaded image can be used as a property cover if the property does not already have one.
+
+j. Admin monitoring
+
+The admin dashboard was improved to display property listing information, user records, reports, and verification data. Property cover images now use the same reliable image-rendering behavior used in buyer and broker pages.
+
+k. Build, testing, and deployment
+
+The system was checked using linting and production builds. The latest verified commands were:
+
+npm run lint
+npm run build
+
+Both commands passed before deployment. The application was then pushed to the remote repository and deployed to Vercel production.
+
+
+5. Specific Implemented Changes
+
+The following list summarizes the main technical changes:
+
+1. Improved Firestore data loading efficiency.
+2. Loaded property details, room images, and room tours in parallel.
+3. Added limits to notification queries to reduce unnecessary reads.
+4. Improved buyer property browsing to include active and legacy listings.
+5. Added published virtual tour detection for property cards.
+6. Improved recently viewed property images on the buyer dashboard.
+7. Added fallback image lookup from roomImages when a property has no direct cover image.
+8. Fixed buyer offer submission in negotiations by avoiding permission-sensitive reads.
+9. Added native image rendering for dynamic property images.
+10. Added native logo rendering through a reusable AppLogo component.
+11. Improved property image display in buyer, broker, favorites, and admin views.
+12. Added Cloudinary and common image host support in Next.js configuration.
+13. Preserved uploaded room images and virtual tour assets through Cloudinary.
+14. Verified the system with lint and production build commands.
+15. Pushed the latest source code changes to the remote GitHub repository.
+16. Deployed the final application to Vercel production.
+
+
+6. Updated System Modules
+
+The current system includes the following functional modules:
+
+a. Authentication Module
+
+Handles user registration, login, session detection, and role-based routing.
+
+b. Buyer Module
+
+Allows buyers to browse properties, view details, favorite listings, check recently viewed properties, make offers, request viewing schedules, and access negotiations.
+
+c. Broker Module
+
+Allows brokers to create and manage listings, upload property images, manage availability, generate or manage virtual tours, respond to negotiations, and monitor schedules.
+
+d. Admin Module
+
+Allows administrators to monitor users, property listings, reports, verification records, and system activity.
+
+e. Media and Virtual Tour Module
+
+Handles property image uploads, room image storage, Cloudinary persistence, and virtual tour asset references.
+
+f. Notification Module
+
+Displays role-specific notifications while limiting data retrieval for better efficiency.
+
+
+7. Deployment Information
+
+The application was deployed to Vercel production.
+
+Production URL:
+https://libot-weld.vercel.app
+
+Latest relevant commits:
+01d240a Render logos and property covers natively
+69ef249 Fix dynamic property image rendering
+0427792 Deploy complete application UI and services
+
+
+8. Suggested Thesis Wording
+
+The system was developed as a role-based web application for real estate property browsing and management. It integrates buyer, broker, and administrator functions into a single platform. The buyer can browse listings, view property details, inspect uploaded room images, access virtual tours, save favorites, make offers, and request property viewings. The broker can manage listings, upload room images, update availability, and handle negotiation records. The administrator can monitor users, listings, reports, and verification data.
+
+To improve reliability, the system was updated to display property images using direct browser image rendering and to retrieve fallback images from uploaded room galleries when a property cover is not available. Firestore queries were optimized by loading related data in parallel and limiting notification records. The final version was verified through linting and production build checks, then deployed to Vercel as a live web application.
+
+
+9. Notes for Chapter Placement
+
+Chapter 1 can use the problem-focused sections that discuss limited visualization, communication inefficiency, and the need for a centralized real estate platform.
+
+Chapter 2 can use the related concepts sections, especially real estate listing platforms, role-based access control, cloud storage, virtual tours, and web deployment.
+
+Chapter 3 can use the methodology and implementation sections, especially frontend development, Firestore integration, authentication, image handling, negotiation workflow, and deployment verification.
