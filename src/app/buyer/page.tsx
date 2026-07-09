@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -28,6 +27,7 @@ import { isRemoteImageUrl } from "@/lib/cloudinary";
 import NotificationCenter from "@/components/NotificationCenter";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
 import SafeImage from "@/components/SafeImage";
+import AppLogo from "@/components/AppLogo";
 
 type RecentProperty = {
   id: string;
@@ -174,7 +174,7 @@ export default function BuyerDashboard() {
           <div className="p-8 border-b border-slate-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 relative flex-shrink-0">
-                <Image src="/logo.png" alt="LiBot Logo" fill sizes="40px" className="object-contain" />
+                <AppLogo className="h-10 w-10 object-contain" />
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">LiBot</p>

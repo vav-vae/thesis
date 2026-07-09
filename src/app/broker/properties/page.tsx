@@ -19,6 +19,7 @@ import {
 } from "firebase/auth";
 
 import { auth, db } from "@/lib/firebase";
+import { isRemoteImageUrl } from "@/lib/cloudinary";
 import NotificationCenter from "@/components/NotificationCenter";
 import SafeImage from "@/components/SafeImage";
 import {
@@ -83,7 +84,27 @@ export default function BrokerPropertiesPage() {
         });
       });
 
-      setProperties(propertyList);
+      const imageLookup = new Map<string, string>();
+      const propertyIds = propertyList.map((property) => property.id);
+      const chunks = Array.from({ length: Math.ceil(propertyIds.length / 30) }, (_, index) => propertyIds.slice(index * 30, index * 30 + 30));
+      const roomSnapshots = await Promise.all(chunks.map((ids) => getDocs(query(collection(db, "roomImages"), where("propertyId", "in", ids)))))
+        .catch((roomImageError) => {
+          console.error("Unable to load broker gallery covers:", roomImageError);
+          return [];
+        });
+      roomSnapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((item) => {
+          const room = item.data();
+          const cover = Array.isArray(room.imageUrls) ? room.imageUrls.find(isRemoteImageUrl) : undefined;
+          const propertyId = typeof room.propertyId === "string" ? room.propertyId : "";
+          if (propertyId && cover && !imageLookup.has(propertyId)) imageLookup.set(propertyId, cover);
+        });
+      });
+
+      setProperties(propertyList.map((property) => ({
+        ...property,
+        image: isRemoteImageUrl(property.image) ? property.image : imageLookup.get(property.id),
+      })));
       setLoading(false);
     });
 

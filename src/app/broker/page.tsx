@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -24,6 +23,7 @@ import {
   Images,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
+import AppLogo from "@/components/AppLogo";
 
 type PropertyRecord = { id: string; title?: string; location?: string; price?: string; status?: string; createdAt?: Timestamp | Date };
 type TourRecord = { id: string; propertyId?: string; status?: string };
@@ -126,7 +126,7 @@ export default function BrokerPage() {
           <div className="p-8 border-b border-slate-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 relative flex-shrink-0">
-                <Image src="/logo.png" alt="LiBot Logo" fill sizes="40px" className="object-contain" />
+                <AppLogo className="h-10 w-10 object-contain" />
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">LiBot</p>

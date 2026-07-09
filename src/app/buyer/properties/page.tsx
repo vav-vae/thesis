@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -13,6 +12,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { isRemoteImageUrl } from "@/lib/cloudinary";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import SafeImage from "@/components/SafeImage";
+import AppLogo from "@/components/AppLogo";
 
 interface Property {
   id: string;
@@ -97,7 +98,27 @@ export default function BuyerPropertiesPage() {
           } as Property);
         });
 
-        setProperties(propertyList);
+        const imageLookup = new Map<string, string>();
+        const propertyIds = propertyList.map((property) => property.id);
+        const chunks = Array.from({ length: Math.ceil(propertyIds.length / 30) }, (_, index) => propertyIds.slice(index * 30, index * 30 + 30));
+        const roomSnapshots = await Promise.all(chunks.map((ids) => getDocs(query(collection(db, "roomImages"), where("propertyId", "in", ids)))))
+          .catch((roomImageError) => {
+            console.error("Unable to load listing gallery covers:", roomImageError);
+            return [];
+          });
+        roomSnapshots.forEach((snapshot) => {
+          snapshot.docs.forEach((item) => {
+            const room = item.data();
+            const cover = Array.isArray(room.imageUrls) ? room.imageUrls.find(isRemoteImageUrl) : undefined;
+            const propertyId = typeof room.propertyId === "string" ? room.propertyId : "";
+            if (propertyId && cover && !imageLookup.has(propertyId)) imageLookup.set(propertyId, cover);
+          });
+        });
+
+        setProperties(propertyList.map((property) => ({
+          ...property,
+          image: isRemoteImageUrl(property.image) ? property.image : imageLookup.get(property.id),
+        })));
         setTourPropertyIds(new Set(tourSnapshot.docs.filter((item) => item.data().panoramaUrl).map((item) => String(item.data().propertyId))));
         const discovery = profileSnapshot?.data()?.settings?.discovery;
         if (discovery) {
@@ -175,7 +196,7 @@ export default function BuyerPropertiesPage() {
           <div className="p-8 border-b border-slate-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 relative flex-shrink-0">
-                <Image src="/logo.png" alt="LiBot Logo" fill sizes="40px" className="object-contain" />
+                <AppLogo className="h-10 w-10 object-contain" />
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">LiBot</p>

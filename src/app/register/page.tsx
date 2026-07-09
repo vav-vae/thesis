@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
@@ -18,6 +17,7 @@ import {
   db,
 } from "@/lib/firebase";
 import { uploadDocumentToCloudinary, uploadImageToCloudinary } from "@/lib/cloudinary";
+import AppLogo from "@/components/AppLogo";
 import {
   Mail,
   Lock,
@@ -349,7 +349,7 @@ function RegisterForm() {
         <div className="text-center mb-12 animate-fade-in">
           <div className="mb-6 inline-flex items-center justify-center gap-4">
             <div className="relative h-16 w-16 flex-shrink-0">
-              <Image src="/logo.png" alt="LiBot Logo" fill sizes="64px" className="object-contain" priority />
+              <AppLogo className="h-16 w-16 object-contain" />
             </div>
 
             <div className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-slate-600">

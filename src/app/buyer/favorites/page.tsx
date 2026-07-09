@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { collection, documentId, getDocs, query, where } from "firebase/firestore";
@@ -9,8 +8,10 @@ import { signOut } from "firebase/auth";
 import { ChevronRight, Heart, Home, LogOut, MapPin, Menu, MessageSquare, Search, Settings, UserRound, X } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import SafeImage from "@/components/SafeImage";
+import AppLogo from "@/components/AppLogo";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
 import { auth, db } from "@/lib/firebase";
+import { isRemoteImageUrl } from "@/lib/cloudinary";
 
 type Property = {
   id: string;
@@ -43,7 +44,26 @@ export default function BuyerFavoritesPage() {
       try {
         const chunks = Array.from({ length: Math.ceil(favoriteIds.length / 30) }, (_, index) => favoriteIds.slice(index * 30, index * 30 + 30));
         const snapshots = await Promise.all(chunks.map((ids) => getDocs(query(collection(db, "properties"), where(documentId(), "in", ids)))));
-        if (!cancelled) setProperties(snapshots.flatMap((snapshot) => snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Property))));
+        const propertyList = snapshots.flatMap((snapshot) => snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Property)));
+        const imageLookup = new Map<string, string>();
+        const roomChunks = Array.from({ length: Math.ceil(propertyList.length / 30) }, (_, index) => propertyList.slice(index * 30, index * 30 + 30).map((property) => property.id));
+        const roomSnapshots = await Promise.all(roomChunks.map((ids) => getDocs(query(collection(db, "roomImages"), where("propertyId", "in", ids)))))
+          .catch((roomImageError) => {
+            console.error("Unable to load favorite gallery covers:", roomImageError);
+            return [];
+          });
+        roomSnapshots.forEach((snapshot) => {
+          snapshot.docs.forEach((item) => {
+            const room = item.data();
+            const cover = Array.isArray(room.imageUrls) ? room.imageUrls.find(isRemoteImageUrl) : undefined;
+            const propertyId = typeof room.propertyId === "string" ? room.propertyId : "";
+            if (propertyId && cover && !imageLookup.has(propertyId)) imageLookup.set(propertyId, cover);
+          });
+        });
+        if (!cancelled) setProperties(propertyList.map((property) => ({
+          ...property,
+          image: isRemoteImageUrl(property.image) ? property.image : imageLookup.get(property.id),
+        })));
       } catch (snapshotError) {
         console.error("Unable to load favorite properties:", snapshotError);
       } finally {
@@ -78,7 +98,7 @@ export default function BuyerFavoritesPage() {
   return <div className="min-h-screen bg-slate-50 text-slate-900">
     {sidebarOpen && <button aria-label="Close navigation" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" />}
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-      <div className="flex items-center gap-3 border-b border-slate-200 p-8"><div className="relative h-10 w-10"><Image src="/logo.png" alt="LiBot Logo" fill sizes="40px" className="object-contain" /></div><div><p className="text-sm font-semibold">LiBot</p><p className="text-xs text-slate-500">Real Estate</p></div><button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto lg:hidden"><X size={20} /></button></div>
+      <div className="flex items-center gap-3 border-b border-slate-200 p-8"><div className="relative h-10 w-10"><AppLogo className="h-10 w-10 object-contain" /></div><div><p className="text-sm font-semibold">LiBot</p><p className="text-xs text-slate-500">Real Estate</p></div><button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto lg:hidden"><X size={20} /></button></div>
       <nav className="flex-1 space-y-2 p-6">
         <NavLink href="/buyer" icon={Home} label="Dashboard" />
         <NavLink href="/buyer/properties" icon={Search} label="Browse Properties" />
