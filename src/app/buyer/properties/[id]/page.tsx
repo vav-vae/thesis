@@ -1,7 +1,6 @@
 "use client";
 
 import { use } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -28,6 +27,7 @@ import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
 import { AMENITY_LABELS } from "@/lib/propertyAmenities";
 import PanoramaViewer from "@/components/PanoramaViewer";
 import ReportButton from "@/components/ReportButton";
+import SafeImage from "@/components/SafeImage";
 
 const PropertyLocationMap = dynamic(() => import("@/components/PropertyLocationMap"), { ssr: false });
 import {
@@ -402,7 +402,7 @@ export default function PropertyDetailsPage({
                       key={index}
                       className="group relative rounded-2xl overflow-hidden bg-gradient-to-br from-slate-200 to-slate-300 h-64 border border-slate-200 hover:border-slate-300 transition-all"
                     >
-                      <Image
+                      <SafeImage
                         src={url}
                         alt={`${room.roomType} - Image ${index + 1}`}
                         fill

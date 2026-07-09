@@ -34,6 +34,7 @@ import {
   Scale,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
+import SafeImage from "@/components/SafeImage";
 
 interface Property {
   id: string;
@@ -348,7 +349,7 @@ export default function BuyerPropertiesPage() {
                         {/* Image Container */}
                         <div className="relative h-48 bg-gradient-to-br from-slate-200 to-slate-300 overflow-hidden">
                           {property.image ? (
-                            <Image
+                            <SafeImage
                               src={property.image as string}
                               alt={property.title || "Property cover"}
                               fill

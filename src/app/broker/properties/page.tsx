@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import {
   collection,
@@ -21,6 +20,7 @@ import {
 
 import { auth, db } from "@/lib/firebase";
 import NotificationCenter from "@/components/NotificationCenter";
+import SafeImage from "@/components/SafeImage";
 import {
   Home,
   MapPin,
@@ -208,7 +208,7 @@ export default function BrokerPropertiesPage() {
                     {/* Property cover: first uploaded gallery image */}
                     <div className="relative h-40 bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center overflow-hidden">
                       {property.image ? (
-                        <Image
+                        <SafeImage
                           src={property.image}
                           alt={`${property.title || "Property"} cover`}
                           fill

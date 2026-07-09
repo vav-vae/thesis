@@ -27,6 +27,7 @@ import { auth, db } from "@/lib/firebase";
 import { isRemoteImageUrl } from "@/lib/cloudinary";
 import NotificationCenter from "@/components/NotificationCenter";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
+import SafeImage from "@/components/SafeImage";
 
 type RecentProperty = {
   id: string;
@@ -393,7 +394,7 @@ export default function BuyerDashboard() {
                   href={`/buyer/properties/${property.id}`}
                   className="group flex items-center gap-4 p-4 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all"
                 >
-                  <div className="relative flex h-24 w-24 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-200 text-slate-400">{property.image ? <Image src={property.image} alt={`${property.title || "Property"} cover`} fill sizes="96px" className="object-cover" /> : <Home size={28} />}</div>
+                  <div className="relative flex h-24 w-24 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-200 text-slate-400">{property.image ? <SafeImage src={property.image} alt={`${property.title || "Property"} cover`} fill sizes="96px" className="object-cover" /> : <Home size={28} />}</div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-slate-900 mb-1 group-hover:text-blue-600 transition-colors">
                       {property.title || "Untitled property"}
