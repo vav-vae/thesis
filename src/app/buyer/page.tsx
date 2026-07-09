@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -76,25 +77,10 @@ export default function BuyerDashboard() {
       }
 
       try {
-        const [userDoc, inquirySnapshot, roomImagesSnapshot] = await Promise.all([
+        const [userDoc, inquirySnapshot] = await Promise.all([
           getDoc(doc(db, "users", currentUser.uid)),
           getDocs(query(collection(db, "negotiations"), where("buyerId", "==", currentUser.uid))),
-          getDocs(collection(db, "roomImages")),
         ]);
-        const galleryCovers = new Map<string, string>();
-        roomImagesSnapshot.docs
-          .sort((first, second) => {
-            const firstCreated = first.data().createdAt;
-            const secondCreated = second.data().createdAt;
-            const firstTime = typeof firstCreated?.toMillis === "function" ? firstCreated.toMillis() : new Date(firstCreated ?? 0).getTime();
-            const secondTime = typeof secondCreated?.toMillis === "function" ? secondCreated.toMillis() : new Date(secondCreated ?? 0).getTime();
-            return firstTime - secondTime;
-          })
-          .forEach((item) => {
-            const room = item.data();
-            const firstImage = Array.isArray(room.imageUrls) ? room.imageUrls[0] : undefined;
-            if (room.propertyId && firstImage && !galleryCovers.has(String(room.propertyId))) galleryCovers.set(String(room.propertyId), String(firstImage));
-          });
         setInquiryCount(inquirySnapshot.size);
         const data = userDoc.data();
         const firstName = data?.firstName?.trim()
@@ -106,13 +92,30 @@ export default function BuyerDashboard() {
         const storedViews = Array.isArray(data?.recentViews)
           ? data.recentViews.filter((item: unknown): item is { propertyId: string; viewedAt?: Timestamp } => Boolean(item && typeof item === "object" && "propertyId" in item && typeof (item as { propertyId?: unknown }).propertyId === "string")).slice(0, 5)
           : [];
-        const resolved = await Promise.all(storedViews.map(async (view: { propertyId: string; viewedAt?: Timestamp }) => {
+        const recentPropertyIds = storedViews.map((view) => view.propertyId);
+        const [resolved, roomImagesSnapshot] = await Promise.all([
+          Promise.all(storedViews.map(async (view: { propertyId: string; viewedAt?: Timestamp }) => {
           const propertySnapshot = await getDoc(doc(db, "properties", view.propertyId));
           if (!propertySnapshot.exists()) return null;
           const property = propertySnapshot.data();
-          return { id: propertySnapshot.id, ...property, image: property.image || galleryCovers.get(propertySnapshot.id), viewedAt: view.viewedAt } as RecentProperty;
-        }));
-        setRecentProperties(resolved.filter((item): item is RecentProperty => item !== null));
+          return { id: propertySnapshot.id, ...property, image: property.image, viewedAt: view.viewedAt } as RecentProperty;
+          })),
+          recentPropertyIds.length
+            ? getDocs(query(collection(db, "roomImages"), where("propertyId", "in", recentPropertyIds)))
+            : Promise.resolve(null),
+        ]);
+        const galleryCovers = new Map<string, string>();
+        roomImagesSnapshot?.docs.forEach((item) => {
+          const room = item.data();
+          const firstImage = Array.isArray(room.imageUrls) ? room.imageUrls.find(isRemoteImageUrl) : undefined;
+          if (room.propertyId && firstImage && !galleryCovers.has(String(room.propertyId))) {
+            galleryCovers.set(String(room.propertyId), firstImage);
+          }
+        });
+        setRecentProperties(resolved.filter((item): item is RecentProperty => item !== null).map((property) => ({
+          ...property,
+          image: isRemoteImageUrl(property.image) ? property.image : galleryCovers.get(property.id),
+        })));
       } catch (error) {
         console.log(error);
         setBuyerName(currentUser.displayName?.trim().split(/\s+/)[0] || "Buyer");
@@ -170,11 +173,7 @@ export default function BuyerDashboard() {
           <div className="p-8 border-b border-slate-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 relative flex-shrink-0">
-                <img
-                  src="/logo.png"
-                  alt="LiBot Logo"
-                  className="h-full w-full object-contain"
-                />
+                <Image src="/logo.png" alt="LiBot Logo" fill sizes="40px" className="object-contain" />
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">LiBot</p>
@@ -394,7 +393,7 @@ export default function BuyerDashboard() {
                   href={`/buyer/properties/${property.id}`}
                   className="group flex items-center gap-4 p-4 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all"
                 >
-                  <div role={property.image ? "img" : undefined} aria-label={property.image ? `${property.title || "Property"} cover` : undefined} style={property.image ? { backgroundImage: `url(${property.image})` } : undefined} className="flex h-24 w-24 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-50 to-slate-200 bg-cover bg-center text-slate-400">{!property.image && <Home size={28} />}</div>
+                  <div className="relative flex h-24 w-24 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-200 text-slate-400">{property.image ? <Image src={property.image} alt={`${property.title || "Property"} cover`} fill sizes="96px" className="object-cover" /> : <Home size={28} />}</div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-slate-900 mb-1 group-hover:text-blue-600 transition-colors">
                       {property.title || "Untitled property"}

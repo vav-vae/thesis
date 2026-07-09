@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import {
   signInWithEmailAndPassword,
@@ -158,13 +159,7 @@ export default function LoginPage() {
           {/* Logo */}
           <div className="flex items-center gap-3 mb-16">
             <div className="theme-preserve-light w-12 h-12 bg-white rounded-2xl flex items-center justify-center flex-shrink-0">
-              <img
-                src="/logo.png"
-                alt="LiBot Logo"
-                width={40}
-                height={40}
-                className="object-contain"
-              />
+              <Image src="/logo.png" alt="LiBot Logo" width={40} height={40} className="object-contain" priority />
             </div>
             <div>
               <h1 className="text-2xl font-light tracking-tight">Real Estate</h1>
@@ -200,13 +195,7 @@ export default function LoginPage() {
           {/* Mobile Logo */}
           <div className="lg:hidden mb-10 inline-flex items-center gap-2">
             <div className="w-10 h-10 bg-slate-900 rounded-2xl flex items-center justify-center">
-              <img
-                src="/logo.png"
-                alt="LiBot Logo"
-                width={32}
-                height={32}
-                className="object-contain"
-              />
+              <Image src="/logo.png" alt="LiBot Logo" width={32} height={32} className="object-contain" priority />
             </div>
             <div>
               <p className="text-sm font-semibold text-slate-900">LiBot</p>

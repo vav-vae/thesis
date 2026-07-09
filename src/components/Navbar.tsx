@@ -1,17 +1,12 @@
 import Link from "next/link";
+import Image from "next/image";
 
 export default function Navbar() {
   return (
     <nav className="bg-[#1a1a1a] border-b border-gray-800 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2">
-          <img
-            src="/logo.png"
-            alt="LiBot Logo"
-            width={40}
-            height={40}
-            className="w-10 h-10"
-          />
+          <Image src="/logo.png" alt="LiBot Logo" width={40} height={40} className="h-10 w-10" priority />
           <span className="text-xl font-bold">LiBot</span>
         </Link>
         

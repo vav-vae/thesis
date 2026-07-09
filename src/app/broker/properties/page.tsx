@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import {
   collection,
@@ -69,25 +70,7 @@ export default function BrokerPropertiesPage() {
         where("brokerId", "==", user.uid)
       );
 
-      const [querySnapshot, roomImagesSnapshot] = await Promise.all([
-        getDocs(q),
-        getDocs(collection(db, "roomImages")),
-      ]);
-
-      const galleryCovers = new Map<string, string>();
-      roomImagesSnapshot.docs
-        .sort((first, second) => {
-          const firstCreated = first.data().createdAt;
-          const secondCreated = second.data().createdAt;
-          const firstTime = typeof firstCreated?.toMillis === "function" ? firstCreated.toMillis() : new Date(firstCreated ?? 0).getTime();
-          const secondTime = typeof secondCreated?.toMillis === "function" ? secondCreated.toMillis() : new Date(secondCreated ?? 0).getTime();
-          return firstTime - secondTime;
-        })
-        .forEach((item) => {
-          const data = item.data();
-          const firstImage = Array.isArray(data.imageUrls) ? data.imageUrls[0] : undefined;
-          if (data.propertyId && firstImage && !galleryCovers.has(String(data.propertyId))) galleryCovers.set(String(data.propertyId), String(firstImage));
-        });
+      const querySnapshot = await getDocs(q);
 
       const propertyList: Property[] = [];
 
@@ -96,7 +79,7 @@ export default function BrokerPropertiesPage() {
         propertyList.push({
           id: doc.id,
           ...data,
-          image: data.image || galleryCovers.get(doc.id),
+          image: data.image,
         });
       });
 
@@ -223,12 +206,15 @@ export default function BrokerPropertiesPage() {
                     className="relative bg-white rounded-2xl border border-slate-200 overflow-hidden hover:shadow-lg hover:border-slate-300 transition-all group"
                   >
                     {/* Property cover: first uploaded gallery image */}
-                    <div className="h-40 bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center overflow-hidden">
+                    <div className="relative h-40 bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center overflow-hidden">
                       {property.image ? (
-                        // Cloudinary URLs are user-uploaded runtime data, so a
-                        // native image avoids coupling cards to a fixed host rule.
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={property.image} alt={`${property.title || "Property"} cover`} className="h-full w-full object-cover" />
+                        <Image
+                          src={property.image}
+                          alt={`${property.title || "Property"} cover`}
+                          fill
+                          sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
+                          className="object-cover"
+                        />
                       ) : (
                         <Home size={48} className="text-slate-400" />
                       )}

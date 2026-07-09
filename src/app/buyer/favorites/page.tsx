@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { onSnapshot, collection } from "firebase/firestore";
+import { collection, documentId, getDocs, query, where } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { ChevronRight, Heart, Home, LogOut, MapPin, Menu, MessageSquare, Search, Settings, UserRound, X } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
@@ -28,13 +29,29 @@ export default function BuyerFavoritesPage() {
   const [signingOut, setSigningOut] = useState(false);
   const { favoriteIds, loading: favoritesLoading, error, toggleFavorite, isUpdating } = useBuyerFavorites();
 
-  useEffect(() => onSnapshot(collection(db, "properties"), (snapshot) => {
-    setProperties(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Property)));
-    setPropertiesLoading(false);
-  }, (snapshotError) => {
-    console.error("Unable to load favorite properties:", snapshotError);
-    setPropertiesLoading(false);
-  }), []);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFavoriteProperties() {
+      if (favoritesLoading) return;
+      if (!favoriteIds.length) {
+        setProperties([]);
+        setPropertiesLoading(false);
+        return;
+      }
+      setPropertiesLoading(true);
+      try {
+        const chunks = Array.from({ length: Math.ceil(favoriteIds.length / 30) }, (_, index) => favoriteIds.slice(index * 30, index * 30 + 30));
+        const snapshots = await Promise.all(chunks.map((ids) => getDocs(query(collection(db, "properties"), where(documentId(), "in", ids)))));
+        if (!cancelled) setProperties(snapshots.flatMap((snapshot) => snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Property))));
+      } catch (snapshotError) {
+        console.error("Unable to load favorite properties:", snapshotError);
+      } finally {
+        if (!cancelled) setPropertiesLoading(false);
+      }
+    }
+    void loadFavoriteProperties();
+    return () => { cancelled = true; };
+  }, [favoriteIds, favoritesLoading]);
 
   const favoriteProperties = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -60,7 +77,7 @@ export default function BuyerFavoritesPage() {
   return <div className="min-h-screen bg-slate-50 text-slate-900">
     {sidebarOpen && <button aria-label="Close navigation" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" />}
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-      <div className="flex items-center gap-3 border-b border-slate-200 p-8"><div className="relative h-10 w-10"><img src="/logo.png" alt="LiBot Logo" className="h-full w-full object-contain" /></div><div><p className="text-sm font-semibold">LiBot</p><p className="text-xs text-slate-500">Real Estate</p></div><button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto lg:hidden"><X size={20} /></button></div>
+      <div className="flex items-center gap-3 border-b border-slate-200 p-8"><div className="relative h-10 w-10"><Image src="/logo.png" alt="LiBot Logo" fill sizes="40px" className="object-contain" /></div><div><p className="text-sm font-semibold">LiBot</p><p className="text-xs text-slate-500">Real Estate</p></div><button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto lg:hidden"><X size={20} /></button></div>
       <nav className="flex-1 space-y-2 p-6">
         <NavLink href="/buyer" icon={Home} label="Dashboard" />
         <NavLink href="/buyer/properties" icon={Search} label="Browse Properties" />
@@ -79,7 +96,7 @@ export default function BuyerFavoritesPage() {
 
         {loading ? <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">{[1, 2, 3].map((item) => <div key={item} className="h-80 animate-pulse rounded-2xl border border-slate-200 bg-white"><div className="h-44 bg-slate-200" /></div>)}</div>
           : favoriteProperties.length > 0 ? <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">{favoriteProperties.map((property) => <article key={property.id} className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
-            <div role={property.image ? "img" : undefined} aria-label={property.image ? property.title || "Property" : undefined} style={property.image ? { backgroundImage: `url(${property.image})` } : undefined} className="relative flex h-48 items-center justify-center bg-slate-100 bg-cover bg-center"><Home size={42} className={property.image ? "hidden" : "text-slate-300"} /><button aria-label="Remove from favorites" disabled={isUpdating(property.id)} onClick={() => void toggleFavorite(property.id)} className="absolute right-3 top-3 rounded-full bg-white p-2.5 shadow-md transition hover:scale-105 disabled:opacity-60"><Heart size={19} className="fill-red-500 text-red-500" /></button></div>
+            <div className="relative flex h-48 items-center justify-center bg-slate-100">{property.image ? <Image src={property.image} alt={property.title || "Property"} fill sizes="(min-width: 1280px) 33vw, (min-width: 768px) 50vw, 100vw" className="object-cover" /> : <Home size={42} className="text-slate-300" />}<button aria-label="Remove from favorites" disabled={isUpdating(property.id)} onClick={() => void toggleFavorite(property.id)} className="absolute right-3 top-3 rounded-full bg-white p-2.5 shadow-md transition hover:scale-105 disabled:opacity-60"><Heart size={19} className="fill-red-500 text-red-500" /></button></div>
             <div className="p-5"><h3 className="line-clamp-2 text-lg font-semibold">{property.title || "Unnamed property"}</h3><p className="mt-2 flex items-start gap-2 text-sm text-slate-500"><MapPin size={15} className="mt-0.5 shrink-0" />{property.location || "Location not specified"}</p><div className="mt-6 flex items-center justify-between"><div><p className="text-xs text-slate-400">Starting price</p><p className="mt-1 text-xl font-semibold">₱{property.price || "Contact"}</p></div><Link href={`/buyer/properties/${property.id}`} aria-label={`View ${property.title || "property"}`} className="rounded-xl bg-blue-600 p-3 text-white hover:bg-blue-700"><ChevronRight size={19} /></Link></div></div>
           </article>)}</div>
           : <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-50"><Heart size={30} className="text-red-400" /></div><h3 className="mt-5 text-xl font-semibold">{search ? "No matching favorites" : "Your favorites list is empty"}</h3><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">{search ? "Try a different property name or location." : "Tap the heart on a property to save it here for easy comparison later."}</p><Link href="/buyer/properties" className="mt-6 inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white"><Search size={16} />Browse properties</Link></div>}

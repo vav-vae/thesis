@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- Local blob previews are not served through Next image optimization. */
+
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {

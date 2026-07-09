@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, doc, onSnapshot, query, Timestamp, where } from "firebase/firestore";
+import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where } from "firebase/firestore";
 import { Bell, CalendarDays, CheckCheck, Flag, Home, ShieldCheck } from "lucide-react";
 import { auth, db } from "@/lib/firebase";
 
@@ -99,7 +99,10 @@ export default function NotificationCenter({ audience }: { audience: Audience })
 
   useEffect(() => {
     if (!userId) return;
-    const unsubscribeProperties = onSnapshot(collection(db, "properties"), (snapshot) => {
+    const propertyNotificationsQuery = audience === "broker"
+      ? query(collection(db, "properties"), where("brokerId", "==", userId), limit(12))
+      : query(collection(db, "properties"), orderBy("createdAt", "desc"), limit(12));
+    const unsubscribeProperties = onSnapshot(propertyNotificationsQuery, (snapshot) => {
       setProperties(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as PropertyRecord)));
     }, (error) => console.error("Unable to load notifications:", error));
 
@@ -111,11 +114,11 @@ export default function NotificationCenter({ audience }: { audience: Audience })
         verification: data?.settings?.notifications?.verification ?? true,
       });
     });
-    const unsubscribeReports = onSnapshot(query(collection(db, "reports"), where("reporterId", "==", userId)), (snapshot) => {
+    const unsubscribeReports = onSnapshot(query(collection(db, "reports"), where("reporterId", "==", userId), limit(12)), (snapshot) => {
       setReports(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as ReportRecord)));
     }, (error) => console.error("Unable to load report notifications:", error));
     const scheduleField = audience === "broker" ? "brokerId" : "buyerId";
-    const unsubscribeSchedules = onSnapshot(query(collection(db, "viewingSchedules"), where(scheduleField, "==", userId)), (snapshot) => {
+    const unsubscribeSchedules = onSnapshot(query(collection(db, "viewingSchedules"), where(scheduleField, "==", userId), limit(24)), (snapshot) => {
       setSchedules(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as ScheduleRecord)));
     }, (error) => console.error("Unable to load schedule notifications:", error));
 

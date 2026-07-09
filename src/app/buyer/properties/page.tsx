@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -8,6 +9,8 @@ import {
   doc,
   getDoc,
   getDocs,
+  query,
+  where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -73,41 +76,28 @@ export default function BuyerPropertiesPage() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       try {
-        const [querySnapshot, profileSnapshot, tourSnapshot, roomImagesSnapshot] = await Promise.all([
-          getDocs(collection(db, "properties")),
+        const [activePropertySnapshot, legacyPropertySnapshot, profileSnapshot, tourSnapshot] = await Promise.all([
+          getDocs(query(collection(db, "properties"), where("status", "==", "active"))),
+          getDocs(query(collection(db, "properties"), where("status", "==", null))),
           user ? getDoc(doc(db, "users", user.uid)) : Promise.resolve(null),
-          getDocs(collection(db, "roomTours")),
-          getDocs(collection(db, "roomImages")),
+          getDocs(query(collection(db, "roomTours"), where("status", "==", "published"))),
         ]);
-
-        const galleryCovers = new Map<string, string>();
-        roomImagesSnapshot.docs
-          .sort((first, second) => {
-            const firstCreated = first.data().createdAt;
-            const secondCreated = second.data().createdAt;
-            const firstTime = typeof firstCreated?.toMillis === "function" ? firstCreated.toMillis() : new Date(firstCreated ?? 0).getTime();
-            const secondTime = typeof secondCreated?.toMillis === "function" ? secondCreated.toMillis() : new Date(secondCreated ?? 0).getTime();
-            return firstTime - secondTime;
-          })
-          .forEach((item) => {
-            const data = item.data();
-            const firstImage = Array.isArray(data.imageUrls) ? data.imageUrls[0] : undefined;
-            if (data.propertyId && firstImage && !galleryCovers.has(String(data.propertyId))) galleryCovers.set(String(data.propertyId), String(firstImage));
-          });
 
         const propertyList: Property[] = [];
 
-        querySnapshot.forEach((doc) => {
+        const propertyDocs = new Map([...activePropertySnapshot.docs, ...legacyPropertySnapshot.docs].map((item) => [item.id, item]));
+
+        propertyDocs.forEach((doc) => {
           const data = doc.data();
           propertyList.push({
             id: doc.id,
             ...data,
-            image: data.image || galleryCovers.get(doc.id),
+            image: data.image,
           } as Property);
         });
 
         setProperties(propertyList);
-        setTourPropertyIds(new Set(tourSnapshot.docs.filter((item) => (item.data().status ?? "published") === "published" && item.data().panoramaUrl).map((item) => String(item.data().propertyId))));
+        setTourPropertyIds(new Set(tourSnapshot.docs.filter((item) => item.data().panoramaUrl).map((item) => String(item.data().propertyId))));
         const discovery = profileSnapshot?.data()?.settings?.discovery;
         if (discovery) {
           setLocationFilter(String(discovery.location ?? ""));
@@ -128,7 +118,6 @@ export default function BuyerPropertiesPage() {
   const propertyPrice = (property: Property) => Number(String(property.price ?? "").replace(/[^0-9.]/g, "")) || 0;
   const activeFilterCount = [locationFilter, minPrice, maxPrice, minBeds].filter(Boolean).length + (virtualToursOnly ? 1 : 0);
   const filteredProperties = properties
-    .filter((property) => property.status !== "archived")
     .filter((property) => {
       const search = searchTerm.trim().toLowerCase();
       const location = property.location?.toLowerCase() ?? "";
@@ -185,11 +174,7 @@ export default function BuyerPropertiesPage() {
           <div className="p-8 border-b border-slate-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 relative flex-shrink-0">
-                <img
-                  src="/logo.png"
-                  alt="LiBot Logo"
-                  className="h-full w-full object-contain"
-                />
+                <Image src="/logo.png" alt="LiBot Logo" fill sizes="40px" className="object-contain" />
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">LiBot</p>
@@ -363,10 +348,12 @@ export default function BuyerPropertiesPage() {
                         {/* Image Container */}
                         <div className="relative h-48 bg-gradient-to-br from-slate-200 to-slate-300 overflow-hidden">
                           {property.image ? (
-                            <img
+                            <Image
                               src={property.image as string}
-                              alt={property.title}
-                              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                              alt={property.title || "Property cover"}
+                              fill
+                              sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
+                              className="object-cover transition-transform duration-300 group-hover:scale-110"
                             />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center bg-slate-100">

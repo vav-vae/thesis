@@ -1,5 +1,4 @@
 import "./globals.css";
-import "leaflet/dist/leaflet.css";
 import { ReactNode } from "react";
 import AccountStatusGuard from "@/components/AccountStatusGuard";
 import ThemeController from "@/components/ThemeController";

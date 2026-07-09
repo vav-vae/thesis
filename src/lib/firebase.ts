@@ -2,7 +2,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics } from "firebase/analytics";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -24,9 +23,10 @@ export const auth = getAuth(app);
 // Initialize Firestore
 export const db = getFirestore(app);
 
-// Initialize Analytics
-try {
-  getAnalytics(app);
-} catch {
-  console.log("Analytics not available in this environment");
+// Analytics is optional and browser-only. Keep it out of server rendering and
+// the critical Firebase bundle used by authentication and Firestore.
+if (typeof window !== "undefined") {
+  void import("firebase/analytics").then(async ({ getAnalytics, isSupported }) => {
+    if (await isSupported()) getAnalytics(app);
+  }).catch(() => undefined);
 }

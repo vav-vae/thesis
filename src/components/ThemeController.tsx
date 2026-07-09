@@ -20,9 +20,12 @@ export default function ThemeController() {
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
     const initial: Theme = stored === "dark" ? "dark" : "light";
-    setTheme(initial);
     applyTheme(initial);
-    setReady(true);
+    const frame = window.requestAnimationFrame(() => {
+      setTheme(initial);
+      setReady(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   const toggleTheme = () => {

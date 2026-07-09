@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -15,6 +16,7 @@ import {
   query,
   where,
   setDoc,
+  arrayUnion,
   Timestamp,
   runTransaction,
   increment,
@@ -124,15 +126,15 @@ export default function PropertyDetailsPage({
 
         console.log("PROPERTY ID:", id);
 
-        // FETCH PROPERTY
-        const docRef = doc(
-          db,
-          "properties",
-          id
-        );
+        const docRef = doc(db, "properties", id);
+        const roomQuery = query(collection(db, "roomImages"), where("propertyId", "==", id));
+        const tourQuery = query(collection(db, "roomTours"), where("propertyId", "==", id));
 
-        const docSnap =
-          await getDoc(docRef);
+        const [docSnap, roomSnapshot, tourSnapshot] = await Promise.all([
+          getDoc(docRef),
+          getDocs(roomQuery),
+          getDocs(tourQuery),
+        ]);
 
         if (docSnap.exists()) {
           const propertyData = {
@@ -164,15 +166,6 @@ export default function PropertyDetailsPage({
 
         }
 
-        // FETCH ROOM IMAGES
-        const roomQuery = query(
-          collection(db, "roomImages"),
-          where("propertyId", "==", id)
-        );
-
-        const roomSnapshot =
-          await getDocs(roomQuery);
-
         const roomList: RoomImage[] = [];
 
         roomSnapshot.forEach((doc) => {
@@ -186,7 +179,6 @@ export default function PropertyDetailsPage({
 
         setRoomImages(roomList);
 
-        const tourSnapshot = await getDocs(query(collection(db, "roomTours"), where("propertyId", "==", id)));
         const publishedTours = tourSnapshot.docs
           .map((item) => ({ id: item.id, ...item.data() } as RoomTour))
           .filter((tour) => (tour.status ?? "published") === "published" && Boolean(tour.panoramaUrl));
@@ -261,35 +253,28 @@ export default function PropertyDetailsPage({
     try {
       const negotiationId = `${buyer.uid}_${property.id}`;
       const negotiationRef = doc(db, "negotiations", negotiationId);
-      const existing = await getDoc(negotiationRef);
-      if (!existing.exists()) {
-        const [buyerSnapshot, brokerSnapshot] = await Promise.all([
-          getDoc(doc(db, "users", buyer.uid)),
-          getDoc(doc(db, "users", property.brokerId)),
-        ]);
-        const buyerData = buyerSnapshot.data();
-        const brokerData = brokerSnapshot.data();
-        await setDoc(negotiationRef, {
-          propertyId: property.id,
-          propertyTitle: property.title || "Property",
-          listingPrice: property.price || null,
-          buyerId: buyer.uid,
-          buyerName: buyerData?.name || [buyerData?.firstName, buyerData?.lastName].filter(Boolean).join(" ") || buyer.displayName || "Buyer",
-          brokerId: property.brokerId,
-          brokerName: brokerData?.name || [brokerData?.firstName, brokerData?.lastName].filter(Boolean).join(" ") || "Property broker",
-          status: "active",
-          messages: [{
-            id: crypto.randomUUID(),
-            senderId: buyer.uid,
-            senderRole: "buyer",
-            text: offerMessage.trim() || "I am interested in this property and would like to make an offer.",
-            offerAmount: amount,
-            createdAt: Timestamp.now(),
-          }],
+      const buyerSnapshot = await getDoc(doc(db, "users", buyer.uid));
+      const buyerData = buyerSnapshot.data();
+      await setDoc(negotiationRef, {
+        propertyId: property.id,
+        propertyTitle: property.title || "Property",
+        listingPrice: property.price || null,
+        buyerId: buyer.uid,
+        buyerName: buyerData?.name || [buyerData?.firstName, buyerData?.lastName].filter(Boolean).join(" ") || buyer.displayName || "Buyer",
+        brokerId: property.brokerId,
+        brokerName: "Property broker",
+        status: "active",
+        messages: arrayUnion({
+          id: crypto.randomUUID(),
+          senderId: buyer.uid,
+          senderRole: "buyer",
+          text: offerMessage.trim() || "I am interested in this property and would like to make an offer.",
+          offerAmount: amount,
           createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        });
-      }
+        }),
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
       router.push("/buyer/negotiations");
     } catch (error) {
       console.error("Unable to start negotiation:", error);
@@ -311,10 +296,10 @@ export default function PropertyDetailsPage({
     if (![30, 60, 90, 120].includes(durationMinutes)) { setScheduleError("Choose a valid viewing duration."); return; }
     setSubmittingSchedule(true); setScheduleError("");
     try {
-      const existing = await getDocs(query(collection(db, "viewingSchedules"), where("buyerId", "==", buyer.uid)));
+      const existing = await getDocs(query(collection(db, "viewingSchedules"), where("buyerId", "==", buyer.uid), where("propertyId", "==", property.id)));
       const duplicate = existing.docs.some((item) => {
         const data = item.data();
-        return data.propertyId === property.id && ["pending", "confirmed"].includes(data.status) && data.scheduledAt?.toMillis?.() === requestedDate.getTime();
+        return ["pending", "confirmed"].includes(data.status) && data.scheduledAt?.toMillis?.() === requestedDate.getTime();
       });
       if (duplicate) throw new Error("You already requested this viewing time.");
       const [buyerSnapshot, brokerSnapshot] = await Promise.all([getDoc(doc(db, "users", buyer.uid)), getDoc(doc(db, "users", property.brokerId))]);
@@ -417,10 +402,12 @@ export default function PropertyDetailsPage({
                       key={index}
                       className="group relative rounded-2xl overflow-hidden bg-gradient-to-br from-slate-200 to-slate-300 h-64 border border-slate-200 hover:border-slate-300 transition-all"
                     >
-                      <img
+                      <Image
                         src={url}
                         alt={`${room.roomType} - Image ${index + 1}`}
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                        fill
+                        sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
+                        className="object-cover transition-transform duration-300 group-hover:scale-110"
                       />
                     </div>
                   ))}
