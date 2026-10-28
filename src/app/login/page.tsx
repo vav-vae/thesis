@@ -122,8 +122,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-screen bg-slate-50 lg:grid-cols-[1.08fr_0.92fr]">
-      <div className="relative hidden overflow-hidden bg-slate-950 bg-[url('/background.png')] bg-cover bg-center p-12 text-white lg:flex lg:flex-col xl:p-16">
+    <div className="min-h-screen bg-slate-100 lg:p-4">
+      <div className="mx-auto grid min-h-screen max-w-[1600px] overflow-hidden bg-white lg:min-h-[calc(100vh-2rem)] lg:grid-cols-[minmax(0,1.06fr)_minmax(420px,0.94fr)] lg:rounded-[28px] lg:shadow-2xl">
+      <section className="relative hidden min-h-[640px] overflow-hidden bg-slate-950 bg-[url('/background.png')] bg-cover bg-center p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-14" aria-label="LiBot introduction">
         <video
           autoPlay
           muted
@@ -137,37 +138,39 @@ export default function LoginPage() {
         >
           <source src="/login-background.mp4" type="video/mp4" />
         </video>
-        <div className="absolute inset-0 bg-slate-950/35" />
-        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/35 via-slate-950/10 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-slate-950/10" />
-        <div className="relative z-10">
-          <div className="mb-16 flex items-center gap-3">
-            <AppLogo className="h-12 w-12 shrink-0 object-contain" />
-            <p className="text-2xl font-medium tracking-tight">LiBot</p>
-          </div>
-          <h2 className="mb-6 max-w-2xl text-5xl font-medium leading-[1.08] xl:text-6xl">
-            Manage every property interaction in one place.
-          </h2>
+        <div className="absolute inset-0 bg-slate-950/30" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/10 to-slate-950/25" />
+        <div className="relative z-10 flex items-center gap-3">
+          <AppLogo className="h-12 w-12 shrink-0 object-contain" />
+          <p className="text-2xl font-semibold tracking-tight">LiBot</p>
         </div>
-      </div>
+        <div className="relative z-10 max-w-xl pb-2">
+          <p className="mb-5 text-xs font-semibold uppercase tracking-[0.22em] text-white/80">Property management, made simpler</p>
+          <h2 className="text-5xl font-semibold leading-[1.08] tracking-tight xl:text-6xl">
+            A clearer view of every property.
+          </h2>
+          <p className="mt-6 max-w-md text-base leading-7 text-white/85">
+            Explore spaces, manage listings, and keep every viewing in one place.
+          </p>
+        </div>
+      </section>
 
-      <main className="flex items-center justify-center p-5 sm:p-8 lg:bg-white lg:p-12">
-        <div className="w-full max-w-md p-6 sm:p-8 lg:p-0">
-          <div className="mb-10 inline-flex items-center gap-2 lg:hidden">
-            <AppLogo className="h-10 w-10 object-contain" />
-            <div>
-              <p className="text-sm font-semibold text-slate-900">LiBot</p>
-              <p className="text-xs text-slate-500">Real Estate</p>
-            </div>
+      <main className="flex min-h-screen items-center justify-center bg-white px-6 py-12 sm:px-12 lg:min-h-0 lg:px-14 xl:px-20">
+        <div className="w-full max-w-[420px]">
+          <div className="mb-16 flex items-center gap-3 lg:hidden">
+            <AppLogo className="h-11 w-11 object-contain" />
+            <p className="text-xl font-semibold tracking-tight text-slate-900">LiBot</p>
           </div>
-          <h1 className="mb-10 text-4xl font-light tracking-tight text-slate-900">Welcome back</h1>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Welcome to LiBot</p>
+          <h1 className="text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">Welcome back.</h1>
+          <p className="mb-10 mt-3 text-sm leading-6 text-slate-600">Sign in to continue to your account.</p>
 
-          {error && <p id="login-error" role="alert" className="mb-6 rounded-xl border border-red-100 bg-red-50 p-4 text-sm leading-relaxed text-red-700">{error}</p>}
-          {notice && <p role="status" className="mb-6 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700">{notice}</p>}
+          {error && <p id="login-error" role="alert" className="mb-6 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm leading-relaxed text-red-700">{error}</p>}
+          {notice && <p role="status" className="mb-6 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm leading-relaxed text-emerald-700">{notice}</p>}
 
-          <form className="space-y-5" onSubmit={(event) => { event.preventDefault(); void login(); }} aria-busy={loading}>
+          <form className="space-y-6" onSubmit={(event) => { event.preventDefault(); void login(); }} aria-busy={loading}>
             <div>
-              <label htmlFor="email" className="mb-3 block text-xs font-semibold uppercase tracking-wider text-slate-600">Email address</label>
+              <label htmlFor="email" className="mb-2 block text-sm font-medium text-slate-800">Email address</label>
               <input
                 id="email"
                 type="email"
@@ -181,13 +184,13 @@ export default function LoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 disabled={loading || resettingPassword}
-                className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-13 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-slate-900 placeholder:text-slate-400 focus:border-slate-600 focus:bg-white focus:outline-none focus:ring-4 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
             <div>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-wider text-slate-600">Password</label>
-                <button type="button" onClick={() => void resetPassword()} disabled={loading || resettingPassword} className="text-xs font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label htmlFor="password" className="block text-sm font-medium text-slate-800">Password</label>
+                <button type="button" onClick={() => void resetPassword()} disabled={loading || resettingPassword} className="text-sm font-medium text-blue-700 hover:underline disabled:opacity-50">
                   {resettingPassword ? "Sending…" : "Forgot password?"}
                 </button>
               </div>
@@ -203,7 +206,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   disabled={loading}
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-4 pr-14 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-13 w-full rounded-xl border border-slate-200 bg-slate-50 pl-4 pr-14 text-slate-900 placeholder:text-slate-400 focus:border-slate-600 focus:bg-white focus:outline-none focus:ring-4 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 <button
                   type="button"
@@ -217,18 +220,19 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
-            <button type="submit" disabled={loading || resettingPassword} className="mt-8 flex h-12 w-full items-center justify-center rounded-xl bg-[#2563eb] font-semibold text-white shadow-sm hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="submit" disabled={loading || resettingPassword} className="flex h-13 w-full items-center justify-center rounded-xl bg-slate-900 font-semibold text-white shadow-sm transition-colors hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50">
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
-          <div className="mt-8 space-y-4 text-center">
+          <div className="mt-8 border-t border-slate-100 pt-7 text-center">
             <p className="text-sm text-slate-600">
-              Don&apos;t have an account? <Link href="/register/choose" className="font-semibold text-slate-900 hover:underline">Create one</Link>
+              New to LiBot? <Link href="/register/choose" className="font-semibold text-slate-900 hover:underline">Create an account</Link>
             </p>
-            <Link href="/install" className="inline-block text-xs text-slate-500 hover:underline">Install LiBot</Link>
+            <Link href="/install" className="mt-5 inline-block text-xs text-slate-500 hover:underline">Install LiBot</Link>
           </div>
         </div>
       </main>
+      </div>
     </div>
   );
 }
