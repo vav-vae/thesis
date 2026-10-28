@@ -20,10 +20,15 @@ async function uploadToCloudinary(
   formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
   if (options.folder) formData.append("folder", options.folder);
 
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    body: formData,
-  });
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl, {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new Error("Cloudinary could not be reached. Check your connection and retry the photo upload.");
+  }
 
   const data: unknown = await readJsonResponse(response, "Cloudinary could not upload this file.");
   if (
@@ -53,20 +58,47 @@ async function ownerFolderId(userId: string): Promise<string> {
 }
 
 async function resizePanoramaSource(file: File): Promise<File> {
-  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  let bitmap: ImageBitmap | null = null;
+  let imageUrl = "";
   try {
-    const largestDimension = Math.max(bitmap.width, bitmap.height);
+    try {
+      if (typeof createImageBitmap === "function") {
+        bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      }
+    } catch {
+      // The camera JPEG can still decode in an image element on some phones.
+    }
+    let source: CanvasImageSource;
+    let sourceWidth: number;
+    let sourceHeight: number;
+    if (bitmap) {
+      source = bitmap;
+      sourceWidth = bitmap.width;
+      sourceHeight = bitmap.height;
+    } else {
+      imageUrl = URL.createObjectURL(file);
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("This photo could not be decoded for upload. Retake it or use a different photo."));
+        image.src = imageUrl;
+      });
+      source = image;
+      sourceWidth = image.naturalWidth;
+      sourceHeight = image.naturalHeight;
+    }
+    const largestDimension = Math.max(sourceWidth, sourceHeight);
     if (largestDimension <= PANORAMA_WORKING_MAX_DIMENSION) return file;
 
     const scale = PANORAMA_WORKING_MAX_DIMENSION / largestDimension;
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("This browser could not prepare the panorama photo.");
-    context.drawImage(bitmap, 0, 0, width, height);
+    context.drawImage(source, 0, 0, width, height);
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
         (value) => value ? resolve(value) : reject(new Error("This browser could not resize the panorama photo.")),
@@ -80,7 +112,8 @@ async function resizePanoramaSource(file: File): Promise<File> {
       lastModified: file.lastModified,
     });
   } finally {
-    bitmap.close();
+    bitmap?.close();
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
   }
 }
 

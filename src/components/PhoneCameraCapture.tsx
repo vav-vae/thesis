@@ -53,6 +53,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
   const [deviceIndex, setDeviceIndex] = useState(0);
   const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const optionsButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -76,6 +77,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     cameraRequestRef.current += 1;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    setActiveStream(null);
     if (videoRef.current) videoRef.current.srcObject = null;
     setCameraReady(false);
   }, []);
@@ -109,27 +111,53 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
         return;
       }
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      setActiveStream(stream);
+      let available: MediaDeviceInfo[] = [];
+      if (navigator.mediaDevices.enumerateDevices) {
+        try {
+          available = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
+        } catch (error) {
+          // Some mobile browsers permit capture but do not expose the device list.
+          console.warn("Camera list is unavailable:", error);
+        }
       }
-      const available = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
       if (request !== cameraRequestRef.current) return;
       setDevices(available);
       const activeId = stream.getVideoTracks()[0]?.getSettings().deviceId;
       const activeIndex = available.findIndex((device) => device.deviceId === activeId);
       if (activeIndex >= 0) setDeviceIndex(activeIndex);
-      setCameraReady(true);
     } catch (error) {
       if (request !== cameraRequestRef.current) return;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       console.error("Unable to start phone camera:", error);
       setCameraError(cameraMessage(error));
-    } finally {
-      if (request === cameraRequestRef.current) setStarting(false);
+      setStarting(false);
     }
   }, [stopCamera]);
+
+  useEffect(() => {
+    if (preview || !activeStream || !videoRef.current) return;
+    const video = videoRef.current;
+    const request = cameraRequestRef.current;
+    let cancelled = false;
+    video.srcObject = activeStream;
+    void video.play().then(() => {
+      if (cancelled || request !== cameraRequestRef.current) return;
+      setCameraReady(true);
+      setStarting(false);
+    }).catch((error) => {
+      if (cancelled || request !== cameraRequestRef.current) return;
+      console.error("Unable to play phone camera preview:", error);
+      setCameraError(cameraMessage(error));
+      stopCamera();
+      setStarting(false);
+    });
+    return () => {
+      cancelled = true;
+      if (video.srcObject === activeStream) video.srcObject = null;
+    };
+  }, [activeStream, preview, stopCamera]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void startCamera(), 0);

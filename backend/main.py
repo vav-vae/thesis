@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import math
 import os
 import re
@@ -22,6 +24,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, sta
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from PIL.Image import DecompressionBombError, DecompressionBombWarning
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
@@ -51,6 +54,8 @@ except ImportError:  # Supports `uvicorn main:app` when launched inside /backend
     from services.panorama_service import analyze_image_sequence, StitchingError, build_four_view_panorama, reconstruct_hybrid_panorama, stitch_images
 
 BASE_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
+STREAM_HEARTBEAT_SECONDS = 10
 default_output_dir = Path("/tmp/libot-outputs") if os.getenv("VERCEL") else BASE_DIR / "outputs"
 OUTPUT_DIR = Path(os.getenv("PANORAMA_OUTPUT_DIR", str(default_output_dir)))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -736,6 +741,52 @@ async def reconstruct_hybrid(
 @app.post("/reconstruct/hybrid/remote", status_code=status.HTTP_201_CREATED)
 async def reconstruct_hybrid_remote(request: Request, payload: RemoteHybridRequest):
     user_id = str(request.state.firebase_user["sub"])
+    if "application/x-ndjson" in request.headers.get("accept", ""):
+        async def stream_result():
+            stage = "Downloading photos"
+
+            async def run_reconstruction():
+                nonlocal stage
+                images, filenames = await read_remote_images(payload.image_urls, user_id)
+                stage = "Reconstructing and saving the tour"
+                return await build_hybrid_response(
+                    images,
+                    filenames,
+                    payload.algorithm,
+                    float(payload.ransac_threshold),
+                    payload.fill_gaps,
+                    capture_views=payload.capture_views,
+                )
+
+            task = asyncio.create_task(run_reconstruction())
+            try:
+                yield json.dumps({"type": "progress", "stage": stage}) + "\n"
+                while not task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=STREAM_HEARTBEAT_SECONDS)
+                    except TimeoutError:
+                        yield json.dumps({"type": "progress", "stage": stage}) + "\n"
+                    except Exception:
+                        break
+                try:
+                    result = task.result()
+                except HTTPException as error:
+                    yield json.dumps({"type": "error", "detail": str(error.detail)}) + "\n"
+                except Exception:
+                    logger.exception("Panorama reconstruction stream failed")
+                    yield json.dumps({"type": "error", "detail": "The panorama processor could not finish this tour. Please retry."}) + "\n"
+                else:
+                    yield json.dumps({"type": "complete", "result": result}) + "\n"
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+        return StreamingResponse(
+            stream_result(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
     images, filenames = await read_remote_images(payload.image_urls, user_id)
     return await build_hybrid_response(
         images,

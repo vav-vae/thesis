@@ -107,9 +107,11 @@ export default function CreateVirtualTourPage() {
   const [aiMaskUrl, setAiMaskUrl] = useState("");
   const [metrics, setMetrics] = useState<StitchMetrics | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [generationStage, setGenerationStage] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState(false);
   const [error, setError] = useState("");
+  const [validationFailed, setValidationFailed] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [lastCaptureHeading, setLastCaptureHeading] = useState<number | null>(null);
   const filesRef = useRef<File[]>([]);
@@ -165,6 +167,7 @@ export default function CreateVirtualTourPage() {
     revision: number,
   ) => {
     setValidating(true);
+    setValidationFailed(false);
     const localResults = await Promise.all(selected.map(inspectImage));
     if (revision !== workflowRevisionRef.current) return;
     setValidations(localResults);
@@ -177,16 +180,19 @@ export default function CreateVirtualTourPage() {
       setValidating(false);
       return;
     }
+    let validationStep = "account check";
     try {
       await auth.authStateReady();
       const user = auth.currentUser;
       if (!user) throw new Error("Sign in before uploading panorama sources.");
+      validationStep = "photo upload";
       const sources = await Promise.all(selected.map(async (file) => ({
         file,
         url: await uploadPanoramaSourceToCloudinary(file, user.uid),
       })));
       if (revision !== workflowRevisionRef.current) return;
       setUploadedSources(sources);
+      validationStep = "panorama image check";
       const response = await panoramaApiFetch("/validate/remote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -217,7 +223,10 @@ export default function CreateVirtualTourPage() {
       setPreflightPassed(data.analysis.can_stitch);
     } catch (validationError) {
       if (revision === workflowRevisionRef.current) {
-        setError(validationError instanceof Error ? validationError.message : "Could not connect to the panorama processor.");
+        const detail = validationError instanceof Error ? validationError.message : "The request failed.";
+        const networkFailure = /^(load failed|failed to fetch|network ?error|network request failed)$/i.test(detail);
+        setError(`${validationStep === "photo upload" ? "Photo upload" : validationStep === "panorama image check" ? "Panorama image check" : "Account check"} failed: ${networkFailure ? "The network request did not complete. Check your connection and try again." : detail}`);
+        setValidationFailed(true);
       }
     } finally {
       if (revision === workflowRevisionRef.current) setValidating(false);
@@ -234,6 +243,7 @@ export default function CreateVirtualTourPage() {
     thresholdValidationPendingRef.current = false;
     filesRef.current = selected;
     setError("");
+    setValidationFailed(false);
     setPanorama("");
     setAiMaskUrl("");
     setMetrics(null);
@@ -294,21 +304,34 @@ export default function CreateVirtualTourPage() {
     const persistedSourceUrls = uploadedSources.map((source) => source.url);
     generatingRef.current = true;
     setGenerating(true);
+    setGenerationStage("Connecting to the panorama processor");
     setError("");
     setPublished(false);
     try {
-      const result = await reconstructHybridPanorama(persistedSourceUrls, { algorithm, ransacThreshold, fillGaps: true, captureViews: sourceCaptureViews });
+      const result = await reconstructHybridPanorama(persistedSourceUrls, {
+        algorithm, ransacThreshold, fillGaps: true, captureViews: sourceCaptureViews,
+        onProgress: (stage) => {
+          if (revision === workflowRevisionRef.current) setGenerationStage(stage);
+        },
+      });
       if (revision !== workflowRevisionRef.current) return;
       setPanorama(result.panoramaUrl);
       setAiMaskUrl(result.aiMaskUrl);
       setMetrics(result.metadata);
     } catch (generateError) {
       if (revision === workflowRevisionRef.current) {
-        setError(generateError instanceof Error ? generateError.message : "Could not connect to the panorama processor.");
+        const detail = generateError instanceof Error ? generateError.message : "Could not connect to the panorama processor.";
+        const networkFailure = /^(load failed|failed to fetch|network ?error|network request failed)$/i.test(detail);
+        setError(networkFailure
+          ? "The panorama processor connection ended before returning a result. Your photos are still on this page; try Generate tour again without recapturing."
+          : detail);
       }
     } finally {
       generatingRef.current = false;
-      if (revision === workflowRevisionRef.current) setGenerating(false);
+      if (revision === workflowRevisionRef.current) {
+        setGenerating(false);
+        setGenerationStage("");
+      }
     }
   };
 
@@ -423,7 +446,8 @@ export default function CreateVirtualTourPage() {
           })}
         </ol>
 
-        {error && <div role="alert" className="mb-6 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AlertCircle className="mt-0.5 shrink-0" size={19} /><div><p className="font-semibold">Action needed</p><p className="mt-1">{error}</p></div></div>}
+        {error && <div role="alert" className="mb-6 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AlertCircle className="mt-0.5 shrink-0" size={19} /><div><p className="font-semibold">Action needed</p><p className="mt-1">{error}</p>{validationFailed && files.length >= 2 && !validating && <button type="button" onClick={() => void selectFiles(filesRef.current)} className="mt-3 rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100">Retry photo upload and check</button>}</div></div>}
+        {generating && <div role="status" className="mb-6 flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800"><LoaderCircle className="shrink-0 animate-spin" size={19} /><p>{generationStage}… Keep this page open while the tour is generated.</p></div>}
         {published && <div className="mb-6 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-800"><CheckCircle2 className="mt-0.5 shrink-0" /><div><p className="font-semibold">Virtual tour published</p><p className="mt-1 text-sm">Buyers can now explore this room from the property details page.</p></div></div>}
 
         <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_22rem]">

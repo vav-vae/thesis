@@ -1,5 +1,6 @@
 import { auth } from "@/lib/firebase";
 import { readJsonResponse } from "./http-response";
+import { readProgressStream } from "./progress-stream";
 import type { CaptureView } from "./capture-guide";
 
 export type QualityIssue = {
@@ -146,11 +147,11 @@ export async function panoramaApiError(response: Response, fallback: string): Pr
 
 export async function reconstructHybridPanorama(
   imageUrls: string[],
-  options: { algorithm: "orb" | "sift"; ransacThreshold: number; fillGaps?: boolean; captureViews?: CaptureView[] },
+  options: { algorithm: "orb" | "sift"; ransacThreshold: number; fillGaps?: boolean; captureViews?: CaptureView[]; onProgress?: (stage: string) => void },
 ): Promise<HybridReconstruction> {
   const response = await panoramaApiFetch("/reconstruct/hybrid/remote", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
     body: JSON.stringify({
       image_urls: imageUrls,
       algorithm: options.algorithm,
@@ -160,7 +161,10 @@ export async function reconstructHybridPanorama(
     }),
   });
   if (!response.ok) throw await panoramaApiError(response, "Hybrid panorama reconstruction failed.");
-  const data = await readJsonResponse<{ success: boolean; detail?: string; panorama_url: string; ai_mask_url: string; metadata: HybridMetadata }>(response, "Hybrid panorama reconstruction failed.");
+  type HybridApiResponse = { success: boolean; detail?: string; panorama_url: string; ai_mask_url: string; metadata: HybridMetadata };
+  const data = response.headers.get("content-type")?.includes("application/x-ndjson")
+    ? await readProgressStream<HybridApiResponse>(response, options.onProgress)
+    : await readJsonResponse<HybridApiResponse>(response, "Hybrid panorama reconstruction failed.");
   if (!data.success) throw new Error(data.detail || "Hybrid panorama reconstruction failed.");
   return {
     panoramaUrl: resolveAssetUrl(data.panorama_url),

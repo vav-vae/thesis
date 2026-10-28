@@ -1,5 +1,7 @@
+import asyncio
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
+import json
 import time
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -295,6 +297,47 @@ class ApiSecurityIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.request("POST", path, json={"image_urls": []})
                 self.assertEqual(response.status_code, 401)
                 self.assertEqual(response.headers["www-authenticate"], "Bearer")
+
+    async def test_streamed_reconstruction_reports_progress_and_result(self):
+        urls = [f"https://example.com/photo-{index}.jpg" for index in range(6)]
+        result = {"success": True, "panorama_url": "https://example.com/tour.jpg"}
+
+        async def slow_result(*args, **kwargs):
+            await asyncio.sleep(0.04)
+            return result
+
+        with (
+            patch("backend.security.FirebaseTokenVerifier.verify", new=AsyncMock(return_value={"sub": TEST_USER_ID})),
+            patch("backend.main.read_remote_images", new=AsyncMock(return_value=([], []))),
+            patch("backend.main.build_hybrid_response", new=AsyncMock(side_effect=slow_result)),
+            patch("backend.main.STREAM_HEARTBEAT_SECONDS", 0.01),
+        ):
+            response = await self.request(
+                "POST", "/reconstruct/hybrid/remote",
+                json={"image_urls": urls, "ransac_threshold": 4.0},
+                headers={"Authorization": "Bearer test.token.value", "Accept": "application/x-ndjson"},
+            )
+        events = [json.loads(line) for line in response.text.splitlines()]
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/x-ndjson", response.headers["content-type"])
+        self.assertEqual(events[0]["type"], "progress")
+        self.assertGreaterEqual(sum(event["type"] == "progress" for event in events), 2)
+        self.assertEqual(events[-1], {"type": "complete", "result": result})
+
+    async def test_streamed_reconstruction_reports_processor_error(self):
+        urls = [f"https://example.com/photo-{index}.jpg" for index in range(6)]
+        with (
+            patch("backend.security.FirebaseTokenVerifier.verify", new=AsyncMock(return_value={"sub": TEST_USER_ID})),
+            patch("backend.main.read_remote_images", new=AsyncMock(side_effect=main_module.HTTPException(status_code=504, detail="Photo download timed out."))),
+        ):
+            response = await self.request(
+                "POST", "/reconstruct/hybrid/remote",
+                json={"image_urls": urls, "ransac_threshold": 4.0},
+                headers={"Authorization": "Bearer test.token.value", "Accept": "application/x-ndjson"},
+            )
+        events = [json.loads(line) for line in response.text.splitlines()]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(events[-1], {"type": "error", "detail": "Photo download timed out."})
 
     async def test_busy_compute_response_is_explicitly_marked_for_safe_retry(self):
         # Build the lazy FastAPI middleware stack, locate the capacity limiter,

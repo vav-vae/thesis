@@ -481,10 +481,13 @@ class ApiSecurityMiddleware:
             return
 
         received_bytes = 0
+        body_complete = False
         upload_deadline = time.monotonic() + self.max_upload_seconds
 
         async def limited_receive() -> Message:
-            nonlocal received_bytes
+            nonlocal received_bytes, body_complete
+            if body_complete:
+                return await receive()
             remaining_seconds = upload_deadline - time.monotonic()
             if remaining_seconds <= 0:
                 raise RequestBodyTimedOut
@@ -499,6 +502,8 @@ class ApiSecurityMiddleware:
                 received_bytes += len(message.get("body", b""))
                 if received_bytes > request_byte_limit:
                     raise RequestBodyTooLarge
+                if not message.get("more_body", False):
+                    body_complete = True
             return message
 
         response_started = False
