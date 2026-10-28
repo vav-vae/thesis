@@ -15,19 +15,20 @@ import {
   LogOut,
   Save,
   ShieldCheck,
-  Sparkles,
+  Camera,
 } from "lucide-react";
 
 import { auth, db } from "@/lib/firebase";
+import PushNotificationSettings from "@/components/PushNotificationSettings";
 
 type BrokerSettings = {
   notifications: { listings: boolean; verification: boolean };
-  virtualTours: { defaultAlgorithm: "orb" | "sift"; ransacThreshold: number };
+  virtualTours: { defaultAlgorithm: "sift"; ransacThreshold: number };
 };
 
 const defaults: BrokerSettings = {
   notifications: { listings: true, verification: true },
-  virtualTours: { defaultAlgorithm: "orb", ransacThreshold: 4 },
+  virtualTours: { defaultAlgorithm: "sift", ransacThreshold: 4 },
 };
 
 export default function BrokerSettingsPage() {
@@ -95,13 +96,14 @@ export default function BrokerSettingsPage() {
     <header className="border-b border-slate-200 bg-white"><div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-5 lg:px-8"><div className="flex items-center gap-4"><Link href="/broker" aria-label="Back to dashboard" className="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50"><ArrowLeft size={19} /></Link><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Broker account</p><h1 className="mt-1 text-2xl font-semibold">Settings</h1></div></div><button onClick={() => void saveSettings()} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{saving ? <LoaderCircle className="animate-spin" size={17} /> : <Save size={17} />}<span className="hidden sm:inline">Save changes</span></button></div></header>
     <main className="mx-auto max-w-5xl space-y-6 px-5 py-8 lg:px-8 lg:py-10">
       {error && <Notice error>{error}</Notice>}{message && <Notice>{message}</Notice>}
+      <PushNotificationSettings />
       <SettingsSection icon={Bell} title="Notifications" description="Choose which activity appears in your LiBot notification center.">
         <Toggle label="Listing activity" detail="Updates related to your property listings." checked={settings.notifications.listings} onChange={(value) => setSettings((current) => ({ ...current, notifications: { ...current.notifications, listings: value } }))} />
         <Toggle label="Broker verification" detail="Approval, rejection, and credential review updates." checked={settings.notifications.verification} onChange={(value) => setSettings((current) => ({ ...current, notifications: { ...current.notifications, verification: value } }))} />
       </SettingsSection>
 
-      <SettingsSection icon={Sparkles} title="Virtual-tour defaults" description="These values prefill the reconstruction studio and can still be changed per room.">
-        <div className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6"><label className="text-sm font-semibold text-slate-700">Feature detector<select value={settings.virtualTours.defaultAlgorithm} onChange={(event) => setSettings((current) => ({ ...current, virtualTours: { ...current.virtualTours, defaultAlgorithm: event.target.value as "orb" | "sift" } }))} className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-normal outline-none focus:border-blue-400"><option value="orb">ORB — faster processing</option><option value="sift">SIFT — stronger matching</option></select></label><label className="text-sm font-semibold text-slate-700">RANSAC threshold<input type="number" min="1" max="10" step="0.5" value={settings.virtualTours.ransacThreshold} onChange={(event) => setSettings((current) => ({ ...current, virtualTours: { ...current.virtualTours, ransacThreshold: Math.min(10, Math.max(1, Number(event.target.value) || 4)) } }))} className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 font-normal outline-none focus:border-blue-400" /><span className="mt-2 block text-xs font-normal leading-5 text-slate-500">1–10 pixels. The balanced default is 4.</span></label></div>
+      <SettingsSection icon={Camera} title="Virtual-tour defaults" description="These values prefill the reconstruction studio and can still be changed per room.">
+        <div className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6"><div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"><p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Feature detector</p><p className="mt-1 font-semibold">SIFT — stronger matching</p></div><label className="text-sm font-semibold text-slate-700">RANSAC threshold<input type="number" min="1" max="10" step="0.5" value={settings.virtualTours.ransacThreshold} onChange={(event) => setSettings((current) => ({ ...current, virtualTours: { ...current.virtualTours, ransacThreshold: Math.min(10, Math.max(1, Number(event.target.value) || 4)) } }))} className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 font-normal outline-none focus:border-blue-400" /><span className="mt-2 block text-xs font-normal leading-5 text-slate-500">1–10 pixels. The balanced default is 4.</span></label></div>
       </SettingsSection>
 
       <SettingsSection icon={KeyRound} title="Account security" description={`Signed in as ${user.email || "your broker account"}.`}>

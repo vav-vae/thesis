@@ -24,6 +24,7 @@ import {
   db,
 } from "@/lib/firebase";
 import NotificationCenter from "@/components/NotificationCenter";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import {
   ChevronLeft,
   Upload,
@@ -33,9 +34,7 @@ import {
   ImageIcon,
   Home,
   X,
-  Camera,
   Check,
-  Sparkles,
 } from "lucide-react";
 
 interface Property {
@@ -163,21 +162,7 @@ export default function UploadImagesPage() {
       for (let i = 0; i < images.length; i++) {
         const file = images[i];
 
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("upload_preset", "libot_uploads");
-
-        const response = await fetch(
-          "https://api.cloudinary.com/v1_1/dpnsayn8m/image/upload",
-          {
-            method: "POST",
-            body: formData,
-          }
-        );
-
-        const data = await response.json();
-        if (!response.ok || !data.secure_url) throw new Error(data.error?.message || `Unable to upload ${file.name}.`);
-        uploadedUrls.push(data.secure_url);
+        uploadedUrls.push(await uploadImageToCloudinary(file));
       }
 
       const propertyRef = doc(db, "properties", selectedProperty);
@@ -235,7 +220,7 @@ export default function UploadImagesPage() {
       </header>
 
       <main className="mx-auto max-w-6xl p-4 sm:p-6 lg:py-10">
-        <div className="mb-7 flex flex-col gap-4 rounded-3xl bg-slate-900 p-6 text-white sm:flex-row sm:items-center sm:justify-between sm:p-8"><div className="max-w-2xl"><div className="flex items-center gap-2 text-blue-300"><Camera size={18} /><span className="text-xs font-semibold uppercase tracking-[0.18em]">Visual documentation</span></div><h2 className="mt-3 text-2xl font-semibold sm:text-3xl">Show buyers what every room looks like.</h2><p className="mt-2 text-sm leading-6 text-white/65">Upload front, back, left, right, ceiling, and detail photos here. These images appear in the property gallery and are not used for panorama stitching.</p></div><Link href="/broker/create-tour" className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-900"><Sparkles size={17} />Create panorama instead</Link></div>
+        <div className="mb-7 flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-medium text-slate-900">Property photos</h2><p className="mt-2 text-sm text-slate-500">Photos added here appear in the property gallery.</p></div><Link href="/broker/create-tour" className="shrink-0 text-sm font-medium text-blue-600 hover:underline">Create a virtual tour</Link></div>
         {/* Success State */}
         {success && (
           <div className="mb-8 p-4 bg-green-50 border border-green-200 rounded-xl flex items-start gap-3 animate-slide-down">

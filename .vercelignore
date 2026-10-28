@@ -1,4 +1,5 @@
 .git
+.vercel
 .next
 .vscode
 backend/venv
@@ -8,3 +9,11 @@ backend/outputs
 test image
 Thesis Papers
 *.docx
+functions
+firestore-debug.log
+*-debug.log
+.agents
+.codex
+.local
+tests
+**/.env*

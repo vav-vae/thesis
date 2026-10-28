@@ -25,5 +25,5 @@ export default function PanoramaViewer({ panorama, caption }: { panorama: string
     };
   }, [panorama]);
 
-  return <figure><div ref={containerRef} aria-label={caption || "Interactive 360-degree panorama"} className="h-[28rem] w-full cursor-grab overflow-hidden rounded-2xl bg-slate-950 active:cursor-grabbing" />{caption && <figcaption className="mt-2 text-center text-xs text-slate-500">{caption} · Drag to look around · Scroll to zoom</figcaption>}</figure>;
+  return <figure><div ref={containerRef} aria-label={caption || "Interactive 360-degree panorama"} className="relative h-[28rem] w-full cursor-grab overflow-hidden rounded-2xl bg-slate-950 active:cursor-grabbing" />{caption && <figcaption className="mt-2 text-center text-xs text-slate-500">{caption} · Drag to look around · Scroll to zoom</figcaption>}</figure>;
 }

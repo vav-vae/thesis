@@ -1,0 +1,113 @@
+LIBOT PRE-ORAL: REVISED PARTS AND SYSTEM CHANGES
+Prepared: August 10, 2026
+
+This checklist summarizes the revisions currently implemented in LiBot. It can
+be used as a guide when explaining the improved system during the pre-oral.
+
+1. PROPERTY LISTING AND MEDIA DISPLAY
+- Improved property cover-photo display across buyer, broker, favorites, and
+  administrator pages.
+- Added a fallback: when a property has no cover photo, the first uploaded room
+  image is used instead.
+- Changed dynamic property images and logos to direct browser image rendering
+  to prevent display issues with external image hosts.
+- Improved recently viewed-property cards so they also show an available cover
+  or room image.
+- Added photo categories and improved property editing so brokers can organize
+  images more clearly.
+
+2. BUYER FEATURES
+- Improved property browsing, including active and legacy listings.
+- Buyers can view property details, room images, virtual-tour availability,
+  favorite listings, and recently viewed properties.
+- Added/updated offer submission from the property-details page. Offers create
+  or update a negotiation record for the buyer and broker.
+- Improved loading of property details, room images, and room tours by fetching
+  related data in parallel.
+- Refined buyer dashboard, profile, and property-list interfaces for a clearer
+  and more responsive experience.
+
+3. BROKER FEATURES
+- Brokers can create and edit property listings, update availability, and
+  upload categorized property/room images.
+- Improved the broker dashboard and profile pages.
+- Improved the virtual-tour capture workflow, including camera guidance,
+  landscape capture, review-before-save, retake, camera switching, fullscreen,
+  and clearer camera-permission/error messages.
+- Guided capture now helps the broker take sequential room images with overlap
+  and optional angle guidance for panorama reconstruction.
+
+4. VIRTUAL TOUR AND PANORAMA RECONSTRUCTION
+- Implemented hybrid panorama reconstruction using 6-12 guided landscape
+  photos taken from one fixed position.
+- Added image-quality checks for orientation, resolution, sharpness,
+  brightness, visible features, and overlap between consecutive images.
+- Uses ORB (or optional SIFT), feature matching, RANSAC homography, perspective
+  warping, and blending to reconstruct the panorama.
+- Added an evidence mask that distinguishes pixels supported by actual photos
+  from missing regions.
+- Missing regions may be filled with an inpainting placeholder, but the system
+  keeps a generated-region mask, region information, and a disclosure message.
+- Added reconstruction confidence based on RANSAC consistency and real-image
+  coverage; AI-filled areas do not increase the confidence score.
+- Integrated the output with the buyer-facing Marzipano virtual-tour viewer.
+- Stored room-image and virtual-tour assets in Cloudinary with Firestore
+  metadata for persistence.
+
+5. SECURITY AND ACCOUNT PROTECTION
+- Secured panorama-processing endpoints with Firebase Authentication tokens.
+- Added backend verification of token signature, audience, issuer, expiry,
+  authentication time, and user identity.
+- Added an eight-hour absolute session limit; users are signed out when the
+  original sign-in session expires.
+- Added per-user and per-IP rate limits for image validation and reconstruction.
+- Limited each server instance to one simultaneous OpenCV reconstruction job to
+  avoid excessive CPU and memory use.
+- Added request, file-size, decoded-image-pixel, image-format, and image-count
+  limits before processing uploads.
+- Added strict validation for remote Cloudinary image URLs so the backend only
+  downloads authorized panorama-source paths, not arbitrary Internet URLs.
+- Added security headers, Content Security Policy, stricter CORS settings, and
+  disabled interactive backend API documentation in production.
+- Added environment-variable templates and security documentation for safer
+  local and production configuration.
+
+6. PERFORMANCE, DATA, AND RELIABILITY
+- Reduced unnecessary Firestore reads by limiting notification queries.
+- Improved parallel data loading for property details, images, and tours.
+- Improved Cloudinary upload validation and storage-path checking.
+- Added image-host configuration and improved handling of external image URLs.
+- Improved role-based account handling for buyer, broker, and administrator
+  dashboards.
+- Improved administrator monitoring pages for users, properties, reports, and
+  verification records.
+
+7. USER INTERFACE AND ACCESSIBILITY
+- Updated navigation, dashboard layouts, login and registration screens, and
+  responsive styling across buyer, broker, and administrator views.
+- Added a reusable dashboard sidebar and loading skeletons to make navigation
+  and loading states clearer.
+- Updated site branding assets, page icon, and layout presentation.
+- Improved account-status handling so inactive accounts are signed out safely.
+
+8. DEPLOYMENT AND TESTING
+- The frontend is configured for Vercel deployment.
+- The project includes documented environment configuration for the frontend
+  and panorama backend.
+- Backend security tests and image-analysis tests are included in the project.
+- Earlier system revisions were verified through linting and production builds
+  before deployment.
+
+SHORT PRE-ORAL SUMMARY
+LiBot was revised from a basic real-estate listing platform into a more complete
+role-based system. The main improvements are reliable property-media display,
+buyer-broker negotiation and scheduling support, broker-controlled property
+management, guided panorama creation, transparent virtual-tour reconstruction,
+stronger account/API protection, and a clearer responsive interface for buyers,
+brokers, and administrators.
+
+IMPORTANT LIMITATION TO STATE HONESTLY
+The current gap-filling stage uses deterministic OpenCV inpainting as a
+placeholder, not a deployed generative-AI model. Any filled region is marked
+and disclosed to users. Also, production Firestore rules and the recommended
+private verification-data schema must be configured before a full public launch.

@@ -1,0 +1,19 @@
+name: Firebase emulator integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: functions/package-lock.json }
+      - run: npm ci
+        working-directory: functions
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - run: npx firebase-tools emulators:exec --project demo-libot --only firestore,functions "npm test --prefix functions"

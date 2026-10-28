@@ -14,7 +14,6 @@ import {
   Phone,
   Settings,
   ShieldCheck,
-  Sparkles,
   UserRound,
   X,
 } from "lucide-react";
@@ -315,7 +314,7 @@ export default function BuyerProfilePage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_top_left,_rgba(15,23,42,0.08),_transparent_45%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.10),_transparent_35%)] pointer-events-none" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-slate-200" />
 
       <main className="relative mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
         <div className="mb-6 flex items-center justify-between gap-4">
@@ -574,7 +573,7 @@ export default function BuyerProfilePage() {
           <aside className="space-y-6">
             <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-5 flex items-center gap-2">
-                <Sparkles size={18} className="text-slate-500" />
+                <UserRound size={18} className="text-slate-500" />
                 <h2 className="text-lg font-semibold text-slate-900">Search Preferences</h2>
               </div>
 

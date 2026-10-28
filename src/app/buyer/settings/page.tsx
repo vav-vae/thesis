@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 import { auth, db } from "@/lib/firebase";
+import PushNotificationSettings from "@/components/PushNotificationSettings";
 
 type BuyerSettings = {
   notifications: { listings: boolean };
@@ -100,6 +101,7 @@ export default function BuyerSettingsPage() {
     <header className="border-b border-slate-200 bg-white"><div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-5 lg:px-8"><div className="flex items-center gap-4"><Link href="/buyer" aria-label="Back to dashboard" className="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50"><ArrowLeft size={19} /></Link><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Buyer account</p><h1 className="mt-1 text-2xl font-semibold">Settings</h1></div></div><button onClick={() => void saveSettings()} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{saving ? <LoaderCircle className="animate-spin" size={17} /> : <Save size={17} />}<span className="hidden sm:inline">Save changes</span></button></div></header>
     <main className="mx-auto max-w-5xl space-y-6 px-5 py-8 lg:px-8 lg:py-10">
       {error && <Notice error>{error}</Notice>}{message && <Notice>{message}</Notice>}
+      <PushNotificationSettings />
       <SettingsSection icon={Bell} title="Notifications" description="Choose which activity appears in your LiBot notification center."><Toggle label="New property listings" detail="Show alerts when properties are added to LiBot." checked={settings.notifications.listings} onChange={(value) => setSettings((current) => ({ ...current, notifications: { listings: value } }))} /></SettingsSection>
 
       <SettingsSection icon={Search} title="Property discovery defaults" description="These filters automatically prefill Browse Properties whenever you visit it.">

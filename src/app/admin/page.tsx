@@ -21,7 +21,6 @@ import {
   Camera,
   CheckCircle2,
   CheckCheck,
-  ChevronRight,
   CircleUserRound,
   ClipboardCheck,
   Home,
@@ -191,6 +190,8 @@ export default function AdminPage() {
   const [signingOut, setSigningOut] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
+  const [reportDecision, setReportDecision] = useState<{ report: ReportRecord; status: "resolved" | "dismissed" } | null>(null);
+  const [reportNote, setReportNote] = useState("");
 
   const loadPlatformData = useCallback(async () => {
     setLoadingData(true);
@@ -343,12 +344,9 @@ export default function AdminPage() {
     }
   };
 
-  const updateReportStatus = async (report: ReportRecord, status: "in_review" | "resolved" | "dismissed") => {
-    const resolutionNote = status === "in_review"
-      ? null
-      : window.prompt(status === "resolved" ? "Add a resolution note for the reporter:" : "Explain why this report is being dismissed:", report.resolutionNote ?? "");
-    if (status !== "in_review" && !resolutionNote?.trim()) {
-      setActionError("A resolution note is required when resolving or dismissing a report.");
+  const updateReportStatus = async (report: ReportRecord, status: "in_review" | "resolved" | "dismissed", resolutionNote?: string) => {
+    if (status !== "in_review" && (resolutionNote?.trim().length ?? 0) < 10) {
+      setActionError("Enter a clear note of at least 10 characters.");
       return;
     }
     setActionId(report.id);
@@ -357,12 +355,24 @@ export default function AdminPage() {
       const changes = { status, resolutionNote: resolutionNote?.trim() || null, reviewedBy: admin?.id ?? null, updatedAt: serverTimestamp(), ...(status !== "in_review" ? { resolvedAt: serverTimestamp() } : {}) };
       await updateDoc(doc(db, "reports", report.id), changes);
       setReports((current) => current.map((item) => item.id === report.id ? { ...item, status, resolutionNote: resolutionNote?.trim() || null, updatedAt: new Date() } : item));
+      setReportDecision(null);
+      setReportNote("");
     } catch (error) {
       console.error("Unable to update report:", error);
       setActionError("The report status could not be updated.");
     } finally {
       setActionId(null);
     }
+  };
+
+  const requestReportStatus = (report: ReportRecord, status: "in_review" | "resolved" | "dismissed") => {
+    setActionError("");
+    if (status === "in_review") {
+      void updateReportStatus(report, status);
+      return;
+    }
+    setReportNote(report.resolutionNote ?? "");
+    setReportDecision({ report, status });
   };
 
   const deactivateReportedUser = async (report: ReportRecord) => {
@@ -478,16 +488,16 @@ export default function AdminPage() {
       <aside className={`fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-2rem))] flex-col border-r border-slate-200 bg-white shadow-xl transition-transform lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex h-24 items-center gap-3 border-b border-slate-200 px-7">
           <div className="relative h-11 w-11"><AppLogo className="h-11 w-11 object-contain" alt="LiBot" /></div>
-          <div><p className="font-semibold">LiBot Admin</p><p className="text-xs text-slate-500">Platform operations</p></div>
+          <div><p className="font-semibold">LiBot Admin</p></div>
           <button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto p-2 lg:hidden"><X size={20} /></button>
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto p-5">
-          <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Navigation</p>
+
           {navigation.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.id} onClick={() => selectSection(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${section === item.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}>
-                <Icon size={19} /><span>{item.label}</span>
+              <button key={item.id} onClick={() => selectSection(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${section === item.id ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}>
+                <Icon size={17} strokeWidth={1.5} aria-hidden="true" /><span>{item.label}</span>
                 {item.id === "verification" && pendingBrokers.length > 0 && <span className={`ml-auto rounded-full px-2 py-0.5 text-xs ${section === item.id ? "bg-white/15" : "bg-amber-100 text-amber-700"}`}>{pendingBrokers.length}</span>}
               </button>
             );
@@ -502,7 +512,7 @@ export default function AdminPage() {
       <main className="lg:ml-72">
         <header className="sticky top-0 z-30 flex min-h-20 items-center border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-8">
           <button aria-label="Open navigation" onClick={() => setSidebarOpen(true)} className="mr-3 rounded-xl p-2 text-slate-700 hover:bg-slate-100 hover:text-blue-600 lg:hidden"><Menu size={23} /></button>
-          <div className="min-w-0"><h1 className="truncate text-lg font-semibold sm:text-xl">{navigation.find((item) => item.id === section)?.label}</h1><p className="hidden text-sm text-slate-500 sm:block">Manage LiBot safely and efficiently.</p></div>
+          <div className="min-w-0"><h1 className="truncate text-lg font-semibold sm:text-xl">{navigation.find((item) => item.id === section)?.label}</h1></div>
           <div className="relative ml-auto">
             <button aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)} className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
               <Bell size={19} />
@@ -529,7 +539,7 @@ export default function AdminPage() {
           )}
           {section === "verification" && <VerificationQueue brokers={filterUsers(brokers)} search={search} onSearch={setSearch} onReview={setSelectedBroker} />}
           {section === "properties" && <PropertyManagement properties={properties} onView={setSelectedProperty} onToggleArchive={togglePropertyArchive} onRemove={removeProperty} actionId={actionId} />}
-          {section === "reports" && <ReportManagement reports={reports} users={users} actionId={actionId} onStatus={updateReportStatus} onDeactivate={deactivateReportedUser} />}
+          {section === "reports" && <ReportManagement reports={reports} users={users} actionId={actionId} onStatus={requestReportStatus} onDeactivate={deactivateReportedUser} />}
           {section === "profile" && <AdminProfile admin={admin} onUpdate={setAdmin} />}
         </div>
       </main>
@@ -546,6 +556,7 @@ export default function AdminPage() {
         />
       )}
       {selectedProperty && <PropertyModal property={selectedProperty} onClose={() => setSelectedProperty(null)} onRemove={() => removeProperty(selectedProperty)} working={actionId === selectedProperty.id} />}
+      {reportDecision && <ReportDecisionModal decision={reportDecision} note={reportNote} onNote={setReportNote} error={actionError} working={actionId === reportDecision.report.id} onClose={() => { if (actionId !== reportDecision.report.id) { setReportDecision(null); setReportNote(""); setActionError(""); } }} onConfirm={() => void updateReportStatus(reportDecision.report, reportDecision.status, reportNote)} />}
     </div>
   );
 }
@@ -578,20 +589,28 @@ function NotificationPanel({ notifications, readIds, onOpen, onMarkAll }: { noti
 
 function Dashboard({ buyers, brokers, pending, properties, onNavigate }: { buyers: PlatformUser[]; brokers: PlatformUser[]; pending: PlatformUser[]; properties: PropertyListing[]; onNavigate: (section: AdminSection) => void }) {
   const cards = [
-    { label: "Total Buyers", value: buyers.length, icon: UserRound, color: "bg-blue-50 text-blue-700", target: "buyers" as const },
-    { label: "Total Brokers", value: brokers.length, icon: Building2, color: "bg-violet-50 text-violet-700", target: "brokers" as const },
-    { label: "Pending Verifications", value: pending.length, icon: ClipboardCheck, color: "bg-amber-50 text-amber-700", target: "verification" as const },
-    { label: "Property Listings", value: properties.length, icon: House, color: "bg-emerald-50 text-emerald-700", target: "properties" as const },
+    { label: "Total Buyers", value: buyers.length, target: "buyers" as const },
+    { label: "Total Brokers", value: brokers.length, target: "brokers" as const },
+    { label: "Pending Verifications", value: pending.length, target: "verification" as const },
+    { label: "Property Listings", value: properties.length, target: "properties" as const },
   ];
   return (
     <div className="space-y-8">
-      <section><p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-600">Platform overview</p><h2 className="mt-2 text-3xl font-light sm:text-4xl">Good decisions start with a clear view.</h2><p className="mt-2 text-slate-600">Monitor users, verification applications, and property activity.</p></section>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map(({ label, value, icon: Icon, color, target }) => <button key={label} onClick={() => onNavigate(target)} className="rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:p-6"><div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${color}`}><Icon size={23} /></div><p className="mt-5 text-3xl font-light sm:mt-6">{value}</p><div className="mt-2 flex items-center justify-between text-sm text-slate-500"><span>{label}</span><ChevronRight size={16} /></div></button>)}
+      <h2 className="text-3xl font-medium tracking-tight">Overview</h2>
+      <div className="summary-strip">
+        {cards.map(({ label, value, target }) => <button key={label} onClick={() => onNavigate(target)} className="text-left"><p className="summary-label">{label}</p><p className="summary-value">{value}</p></button>)}
       </div>
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h3 className="text-lg font-semibold">Verification priority</h3><button onClick={() => onNavigate("verification")} className="text-sm font-semibold text-blue-600">View queue</button></div><div className="mt-5 space-y-3">{pending.slice(0, 5).map((broker) => <div key={broker.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 p-4"><Avatar user={broker} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{displayName(broker)}</p><p className="truncate text-xs text-slate-500">{broker.agencyName || "Independent broker"}</p></div><StatusBadge status="pending" /></div>)}{pending.length === 0 && <EmptyState message="No broker applications are waiting for review." />}</div></div>
-        <div className="rounded-3xl bg-slate-900 p-6 text-white shadow-sm"><ShieldCheck size={25} className="text-blue-300" /><h3 className="mt-5 text-2xl font-light">Verification protects the marketplace.</h3><p className="mt-3 text-sm leading-6 text-white/60">Review identification, professional details, and license information before allowing brokers to publish trusted listings.</p><button onClick={() => onNavigate("verification")} className="mt-7 rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-900">Review applications</button></div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h3 className="text-lg font-semibold">Pending broker applications</h3><button onClick={() => onNavigate("verification")} className="text-sm font-semibold text-blue-600">View queue</button></div><div className="mt-5 space-y-3">{pending.slice(0, 5).map((broker) => <div key={broker.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 p-4"><Avatar user={broker} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{displayName(broker)}</p><p className="truncate text-xs text-slate-500">{broker.agencyName || "Independent broker"}</p></div><StatusBadge status="pending" /></div>)}{pending.length === 0 && <EmptyState message="No broker applications are waiting for review." />}</div></div>
+        <section className="border-t border-slate-200 py-6">
+          <h3 className="text-lg font-medium text-slate-900">Accounts</h3>
+          <dl className="mt-5 divide-y divide-slate-200 text-sm">
+            <div className="flex justify-between gap-4 py-4"><dt className="text-slate-500">Active buyers</dt><dd className="font-medium">{buyers.filter((buyer) => buyer.accountStatus !== "inactive").length}</dd></div>
+            <div className="flex justify-between gap-4 py-4"><dt className="text-slate-500">Verified brokers</dt><dd className="font-medium">{brokers.filter((broker) => brokerStatus(broker) === "verified").length}</dd></div>
+            <div className="flex justify-between gap-4 py-4"><dt className="text-slate-500">Inactive accounts</dt><dd className="font-medium">{[...buyers, ...brokers].filter((user) => user.accountStatus === "inactive").length}</dd></div>
+          </dl>
+          <button onClick={() => onNavigate("buyers")} className="mt-5 text-sm font-medium text-blue-600 hover:underline">Manage accounts</button>
+        </section>
       </div>
     </div>
   );
@@ -619,13 +638,98 @@ function ReportManagement({ reports, users, actionId, onStatus, onDeactivate }: 
     if (statusDifference) return statusDifference;
     return (toDate(b.createdAt)?.getTime() ?? 0) - (toDate(a.createdAt)?.getTime() ?? 0);
   });
+  const counts = {
+    open: reports.filter((report) => (report.status ?? "open") === "open").length,
+    review: reports.filter((report) => report.status === "in_review").length,
+    closed: reports.filter((report) => report.status === "resolved" || report.status === "dismissed").length,
+  };
 
-  return <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="p-5 sm:p-6"><p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-600">Trust and safety</p><h2 className="mt-2 text-xl font-semibold">User reports</h2><p className="mt-1 text-sm text-slate-500">Review evidence before dismissing, resolving, or deactivating an account.</p></div><div className="grid gap-4 border-t border-slate-200 p-4 md:grid-cols-2 xl:grid-cols-3 sm:p-5">{ordered.map((report) => {
-    const reportedUser = users.find((user) => user.id === report.reportedUserId || user.uid === report.reportedUserId);
-    const status = report.status ?? "open";
-    const busy = actionId === report.id;
-    return <article key={report.id} className="flex flex-col rounded-2xl border border-slate-200 p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{report.targetType || "Report"}</p><h3 className="mt-1 truncate font-semibold">{report.targetLabel || "Reported item"}</h3></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${status === "open" ? "bg-red-50 text-red-700" : status === "in_review" ? "bg-amber-50 text-amber-700" : status === "resolved" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{status.replace("_", " ")}</span></div><div className="mt-4 rounded-xl bg-slate-50 p-4"><p className="text-sm font-semibold text-slate-800">{report.reason || "No reason supplied"}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{report.details || "No details supplied."}</p></div><div className="mt-4 space-y-1 text-xs text-slate-500"><p>Reporter: <span className="font-medium text-slate-700">{report.reporterRole || "Unknown"}</span></p>{reportedUser && <p>Reported account: <span className="font-medium text-slate-700">{displayName(reportedUser)} · {reportedUser.accountStatus === "inactive" ? "Inactive" : "Active"}</span></p>}<p>Submitted: <span className="font-medium text-slate-700">{formatDate(report.createdAt)}</span></p>{report.negotiationId && <p className="break-all">Negotiation: {report.negotiationId}</p>}</div><div className="mt-auto flex flex-wrap gap-2 border-t border-slate-200 pt-5">{status === "open" && <button onClick={() => onStatus(report, "in_review")} disabled={busy} className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-50">Review</button>}{status !== "resolved" && status !== "dismissed" && <button onClick={() => onStatus(report, "resolved")} disabled={busy} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:opacity-50">Resolve</button>}{status !== "dismissed" && <button onClick={() => onStatus(report, "dismissed")} disabled={busy} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-50">Dismiss</button>}{reportedUser && reportedUser.accountStatus !== "inactive" && <button onClick={() => onDeactivate(report)} disabled={busy} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">Deactivate account</button>}</div></article>;
-  })}{ordered.length === 0 && <div className="md:col-span-2 xl:col-span-3"><EmptyState message="No reports have been submitted." /></div>}</div></section>;
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-5 border-b border-slate-200 px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6">
+        <div><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Risk management</p><h2 className="mt-1 text-xl font-semibold text-slate-950">Reports</h2><p className="mt-1 text-sm text-slate-500">Review submitted concerns and document each administrative decision.</p></div>
+        <dl className="grid grid-cols-3 divide-x divide-slate-200 rounded-lg border border-slate-200 bg-slate-50">
+          {[["Open", counts.open], ["In review", counts.review], ["Closed", counts.closed]].map(([label, value]) => <div key={label} className="min-w-20 px-3 py-2 text-center"><dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-0.5 text-lg font-semibold text-slate-900">{value}</dd></div>)}
+        </dl>
+      </div>
+      <div className="divide-y divide-slate-200">
+        {ordered.map((report) => {
+          const reportedUser = users.find((user) => user.id === report.reportedUserId || user.uid === report.reportedUserId);
+          const status = report.status ?? "open";
+          const busy = actionId === report.id;
+          const statusStyle = status === "open" ? "border-red-200 bg-red-50 text-red-700" : status === "in_review" ? "border-amber-200 bg-amber-50 text-amber-700" : status === "resolved" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-100 text-slate-600";
+          return (
+            <article key={report.id} className="px-5 py-5 transition-colors hover:bg-slate-50/70 sm:px-6">
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(15rem,0.7fr)]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><span className={`rounded-md border px-2 py-1 text-[11px] font-semibold capitalize ${statusStyle}`}>{status.replace("_", " ")}</span><span className="text-xs font-medium text-slate-500">{report.targetType || "Report"}</span><span className="text-xs text-slate-300">•</span><span className="text-xs text-slate-500">{formatDate(report.createdAt)}</span></div>
+                  <h3 className="mt-3 text-base font-semibold text-slate-950">{report.targetLabel || "Reported item"}</h3>
+                  <p className="mt-2 text-sm font-medium text-slate-700">{report.reason || "No reason supplied"}</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-500">{report.details || "No additional details supplied."}</p>
+                  {report.resolutionNote && <div className="mt-4 border-l-2 border-slate-300 pl-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Administrative note</p><p className="mt-1 text-sm leading-6 text-slate-600">{report.resolutionNote}</p></div>}
+                </div>
+                <div className="flex flex-col justify-between gap-4 border-t border-slate-200 pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+                  <dl className="space-y-2 text-xs"><div className="flex justify-between gap-3"><dt className="text-slate-500">Reporter</dt><dd className="font-medium capitalize text-slate-700">{report.reporterRole || "Unknown"}</dd></div>{reportedUser && <div className="flex justify-between gap-3"><dt className="text-slate-500">Reported account</dt><dd className="text-right font-medium text-slate-700">{displayName(reportedUser)}<span className="block text-[10px] font-normal text-slate-400">{reportedUser.accountStatus === "inactive" ? "Inactive" : "Active"}</span></dd></div>}{report.negotiationId && <div><dt className="text-slate-500">Negotiation reference</dt><dd className="mt-1 break-all font-mono text-[10px] text-slate-500">{report.negotiationId}</dd></div>}</dl>
+                  <div className="grid grid-cols-2 gap-2">
+                    {status === "open" && <button onClick={() => onStatus(report, "in_review")} disabled={busy} className="rounded-md border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-50">Start review</button>}
+                    {status !== "resolved" && status !== "dismissed" && <button onClick={() => onStatus(report, "resolved")} disabled={busy} className="rounded-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">Resolve</button>}
+                    {status !== "dismissed" && <button onClick={() => onStatus(report, "dismissed")} disabled={busy} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50">Dismiss</button>}
+                    {reportedUser && reportedUser.accountStatus !== "inactive" && <button onClick={() => onDeactivate(report)} disabled={busy} className="rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">Deactivate</button>}
+                  </div>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+        {ordered.length === 0 && <EmptyState message="No reports have been submitted." />}
+      </div>
+    </section>
+  );
+}
+
+function ReportDecisionModal({ decision, note, onNote, error, working, onClose, onConfirm }: { decision: { report: ReportRecord; status: "resolved" | "dismissed" }; note: string; onNote: (note: string) => void; error: string; working: boolean; onClose: () => void; onConfirm: () => void }) {
+  const dismissing = decision.status === "dismissed";
+  const trimmedLength = note.trim().length;
+  const valid = trimmedLength >= 10 && trimmedLength <= 500;
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:items-center sm:p-4">
+      <form onSubmit={(event) => { event.preventDefault(); if (valid && !working) onConfirm(); }} role="dialog" aria-modal="true" aria-labelledby="report-decision-title" className="max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-5 sm:px-7">
+          <div className="flex gap-3">
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${dismissing ? "border-slate-200 bg-slate-50 text-slate-600" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{dismissing ? <XCircle size={20} /> : <CheckCircle2 size={20} />}</span>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Administrative decision</p>
+              <h2 id="report-decision-title" className="mt-1 text-xl font-semibold">{dismissing ? "Dismiss this report?" : "Resolve this report?"}</h2>
+              <p className="mt-1 text-sm text-slate-500">{dismissing ? "Record why no enforcement action is needed." : "Explain what action was taken or how the issue was resolved."}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} disabled={working} aria-label="Close decision dialog" className="rounded-full p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X size={20} /></button>
+        </div>
+
+        <div className="space-y-5 p-5 sm:p-7">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{decision.report.targetType || "Report"}</p><p className="mt-1 font-semibold text-slate-900">{decision.report.targetLabel || "Reported item"}</p></div><span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">Reported</span></div>
+            <p className="mt-3 text-sm font-semibold text-slate-700">{decision.report.reason || "No reason supplied"}</p>
+            {decision.report.details && <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-slate-500">{decision.report.details}</p>}
+          </div>
+
+          <label className="block text-sm font-semibold text-slate-700">
+            {dismissing ? "Dismissal note" : "Resolution note"} <span className="text-red-500">*</span>
+            <textarea autoFocus required minLength={10} maxLength={500} rows={5} value={note} onChange={(event) => onNote(event.target.value)} disabled={working} placeholder={dismissing ? "State why the report does not require enforcement." : "Summarize the action taken and the outcome."} className="mt-2 w-full resize-none rounded-lg border border-slate-300 bg-white px-4 py-3 font-normal leading-6 text-slate-900 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:opacity-60" />
+            <span className={`mt-1 flex items-center justify-between text-xs font-normal ${note.length > 0 && trimmedLength < 10 ? "text-amber-700" : "text-slate-400"}`}><span>{note.length > 0 && trimmedLength < 10 ? `${10 - trimmedLength} more character${10 - trimmedLength === 1 ? "" : "s"} required` : "This note is saved with the report for accountability."}</span><span>{note.length}/500</span></span>
+          </label>
+
+          {dismissing && <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900"><Flag className="mt-0.5 shrink-0" size={17} /><p><strong>Dismissing closes the case without enforcement.</strong> Confirm that the report and available evidence have been reviewed.</p></div>}
+          {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+        </div>
+
+        <div className="flex flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:justify-end sm:px-7">
+          <button type="button" onClick={onClose} disabled={working} className="rounded-md border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+          <button type="submit" disabled={!valid || working} className={`inline-flex items-center justify-center gap-2 rounded-md px-6 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40 ${dismissing ? "bg-slate-800 hover:bg-slate-900" : "bg-emerald-700 hover:bg-emerald-800"}`}>{working ? <LoaderCircle className="animate-spin" size={17} /> : dismissing ? <XCircle size={17} /> : <CheckCircle2 size={17} />}{working ? "Saving…" : dismissing ? "Dismiss report" : "Resolve report"}</button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 function AdminProfile({ admin, onUpdate }: { admin: PlatformUser | null; onUpdate: (admin: PlatformUser) => void }) {
@@ -760,7 +864,7 @@ function PropertyModal({ property, onClose, onRemove, working }: { property: Pro
 }
 
 function PanelHeader({ title, search, onSearch }: { title: string; search: string; onSearch: (value: string) => void }) {
-  return <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm text-slate-500">Search and manage platform accounts.</p></div><label className="relative block"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search users..." className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-slate-400 sm:w-64" /></label></div>;
+  return <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">{title}</h2></div><label className="relative block"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search users..." className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-slate-400 sm:w-64" /></label></div>;
 }
 
 function Avatar({ user, large = false }: { user: PlatformUser; large?: boolean }) {

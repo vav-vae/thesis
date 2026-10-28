@@ -9,7 +9,6 @@ import {
   Heart,
   Settings,
   Menu,
-  X,
   Search,
   ChevronDown,
   ChevronRight,
@@ -27,7 +26,8 @@ import { isRemoteImageUrl } from "@/lib/cloudinary";
 import NotificationCenter from "@/components/NotificationCenter";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
 import SafeImage from "@/components/SafeImage";
-import AppLogo from "@/components/AppLogo";
+import DashboardSidebar, { type DashboardNavItem } from "@/components/DashboardSidebar";
+import Skeleton from "@/components/Skeleton";
 
 type RecentProperty = {
   id: string;
@@ -39,6 +39,16 @@ type RecentProperty = {
 };
 
 type ViewingSchedule = { id: string; propertyId?: string; propertyTitle?: string; propertyLocation?: string; brokerName?: string; scheduledAt?: Timestamp; durationMinutes?: number; status?: "pending" | "confirmed" | "completed" | "cancelled" | "rejected" };
+
+const buyerNavigation: DashboardNavItem[] = [
+  { href: "/buyer", label: "Dashboard", icon: Home, exact: true },
+  { href: "/buyer/properties", label: "Browse Properties", icon: Search },
+  { href: "/buyer/favorites", label: "Favorites", icon: Heart },
+  { href: "/buyer/negotiations", label: "Negotiations", icon: MessageSquare },
+  { href: "/buyer/calendar", label: "Viewing Calendar", icon: CalendarDays },
+  { href: "/buyer/profile", label: "Profile", icon: UserRound },
+  { href: "/buyer/settings", label: "Settings", icon: Settings },
+];
 
 function viewedTime(value?: Timestamp) {
   if (!value?.toDate) return "Recently";
@@ -165,97 +175,12 @@ export default function BuyerDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-200 transition-transform duration-300 lg:translate-x-0 ${
-        sidebarOpen ? "translate-x-0" : "-translate-x-full"
-      }`}>
-        <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="p-8 border-b border-slate-200">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 relative flex-shrink-0">
-                <AppLogo className="h-10 w-10 object-contain" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-900">LiBot</p>
-                <p className="text-xs text-slate-500">Real Estate</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Navigation */}
-          <nav className="flex-1 p-6 space-y-2">
-            <Link
-              href="/buyer"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <Home size={20} />
-              <span>Dashboard</span>
-            </Link>
-
-            <Link
-              href="/buyer/properties"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <Search size={20} />
-              <span>Browse Properties</span>
-            </Link>
-
-            <Link
-              href="/buyer/profile"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <UserRound size={20} />
-              <span>Profile</span>
-            </Link>
-
-            <Link
-              href="/buyer/favorites"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <Heart size={20} />
-              <span>Favorites</span>
-            </Link>
-
-            <Link
-              href="/buyer/negotiations"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <MessageSquare size={20} />
-              <span>Negotiations</span>
-            </Link>
-
-            <Link
-              href="/buyer/calendar"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <CalendarDays size={20} />
-              <span>Viewing Calendar</span>
-            </Link>
-          </nav>
-
-          {/* Settings & Logout */}
-          <div className="p-6 space-y-2 border-t border-slate-200">
-            <Link
-              href="/buyer/settings"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <Settings size={20} />
-              <span>Settings</span>
-            </Link>
-
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition-all font-medium disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <LogOut size={20} />
-              <span>{signingOut ? "Signing Out..." : "Sign Out"}</span>
-            </button>
-          </div>
-        </div>
-      </aside>
+      <DashboardSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        items={buyerNavigation}
+        footer={<button type="button" onClick={handleSignOut} disabled={signingOut} className="flex min-h-12 w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"><LogOut size={19} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>}
+      />
 
       {/* Main Content */}
       <main className="lg:ml-64">
@@ -265,13 +190,11 @@ export default function BuyerDashboard() {
             <div className="flex items-center gap-4">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
+                aria-label="Open navigation"
+                aria-expanded={sidebarOpen}
                 className="rounded-lg p-2 text-slate-700 transition-colors hover:bg-slate-100 hover:text-blue-600 lg:hidden"
               >
-                {sidebarOpen ? (
-                  <X size={24} />
-                ) : (
-                  <Menu size={24} />
-                )}
+                <Menu size={24} />
               </button>
               <h1 className="text-2xl font-light text-slate-900">Dashboard</h1>
             </div>
@@ -290,7 +213,7 @@ export default function BuyerDashboard() {
                     role={profilePicture ? "img" : undefined}
                     aria-label={profilePicture ? `${buyerName}'s profile picture` : undefined}
                     style={profilePicture ? { backgroundImage: `url(${profilePicture})` } : undefined}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 bg-cover bg-center text-white shadow-sm"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-700 bg-cover bg-center text-white shadow-sm"
                   >
                     {!profilePicture && <UserRound size={18} aria-hidden="true" />}
                   </div>
@@ -330,64 +253,24 @@ export default function BuyerDashboard() {
 
         {/* Page Content */}
         <div className="p-6 lg:p-10">
-          {/* Welcome Section */}
-          <div className="mb-12">
-            <h2 className="text-4xl font-light text-slate-900 mb-2">
-              Welcome back, {buyerName}
-            </h2>
-            <p className="text-slate-600">
-              Explore and manage your favorite properties
-            </p>
+          <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+            <h2 className="text-3xl font-medium tracking-tight text-slate-900">Your property search</h2>
+            <Link href="/buyer/properties" className="rounded-md bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800">Browse properties</Link>
+          </div>
+          <div className="summary-strip mb-10">
+            <div><p className="summary-label">Properties viewed</p><p className="summary-value">{recentProperties.length}</p></div>
+            <Link href="/buyer/favorites"><p className="summary-label">Favorites</p><p className="summary-value">{favoriteIds.length}</p></Link>
+            <Link href="/buyer/negotiations"><p className="summary-label">Inquiries</p><p className="summary-value">{inquiryCount}</p></Link>
+            <Link href="/buyer/calendar"><p className="summary-label">Upcoming viewings</p><p className="summary-value">{upcomingViewings.length}</p></Link>
           </div>
 
-          {/* Stats Grid */}
-          <div className="mb-12 grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-slate-600 text-sm font-medium mb-2">Properties Viewed</p>
-                  <p className="text-3xl font-light text-slate-900">{recentProperties.length}</p>
-                </div>
-                <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
-                  <Eye size={24} className="text-blue-600" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-slate-600 text-sm font-medium mb-2">Favorites</p>
-                  <p className="text-3xl font-light text-slate-900">{favoriteIds.length}</p>
-                </div>
-                <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center">
-                  <Heart size={24} className="text-red-600" fill="currentColor" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-slate-600 text-sm font-medium mb-2">Inquiries</p>
-                  <p className="text-3xl font-light text-slate-900">{inquiryCount}</p>
-                </div>
-                <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center">
-                  <MessageSquare size={24} className="text-green-600" />
-                </div>
-              </div>
-            </div>
-
-            <Link href="/buyer/calendar" className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-shadow hover:shadow-md"><div className="flex items-center justify-between"><div><p className="mb-2 text-sm font-medium text-slate-600">Upcoming Viewings</p><p className="text-3xl font-light text-slate-900">{upcomingViewings.length}</p></div><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-100"><CalendarDays size={24} className="text-emerald-600" /></div></div></Link>
-          </div>
-
-          <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8"><div className="mb-6 flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">Your appointments</p><h3 className="mt-2 text-2xl font-light text-slate-900">Upcoming property viewings</h3></div><Link href="/buyer/calendar" className="shrink-0 text-sm font-semibold text-blue-600">View calendar →</Link></div>{upcomingViewings.length ? <div className="grid gap-3 lg:grid-cols-3">{upcomingViewings.map((item) => { const date = item.scheduledAt!.toDate(); return <Link key={item.id} href="/buyer/calendar" className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:bg-blue-50/30"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{item.propertyTitle || "Property viewing"}</p><p className="mt-1 text-xs text-slate-500">with {item.brokerName || "Property broker"}</p></div><span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase ${item.status === "confirmed" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></div><div className="mt-4 space-y-2 text-xs text-slate-500"><p className="flex items-center gap-2"><CalendarDays size={14} />{date.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</p><p className="flex items-center gap-2"><Clock3 size={14} />{date.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })} · {item.durationMinutes ?? 60} minutes</p>{item.propertyLocation && <p className="flex items-center gap-2"><MapPin size={14} /><span className="truncate">{item.propertyLocation}</span></p>}</div></Link>; })}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center"><CalendarDays className="mx-auto text-slate-300" size={32} /><p className="mt-3 text-sm font-medium text-slate-600">No upcoming viewings</p><Link href="/buyer/properties" className="mt-3 inline-flex text-sm font-semibold text-blue-600">Browse properties to request one</Link></div>}</section>
+          <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8"><div className="mb-6 flex items-center justify-between gap-4"><div><h3 className="text-xl font-medium text-slate-900">Upcoming viewings</h3></div><Link href="/buyer/calendar" className="shrink-0 text-sm font-semibold text-blue-600">View calendar →</Link></div>{upcomingViewings.length ? <div className="grid gap-3 lg:grid-cols-3">{upcomingViewings.map((item) => { const date = item.scheduledAt!.toDate(); return <Link key={item.id} href="/buyer/calendar" className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:bg-blue-50/30"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{item.propertyTitle || "Property viewing"}</p><p className="mt-1 text-xs text-slate-500">with {item.brokerName || "Property broker"}</p></div><span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase ${item.status === "confirmed" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></div><div className="mt-4 space-y-2 text-xs text-slate-500"><p className="flex items-center gap-2"><CalendarDays size={14} />{date.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</p><p className="flex items-center gap-2"><Clock3 size={14} />{date.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })} · {item.durationMinutes ?? 60} minutes</p>{item.propertyLocation && <p className="flex items-center gap-2"><MapPin size={14} /><span className="truncate">{item.propertyLocation}</span></p>}</div></Link>; })}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center"><p className="mt-3 text-sm font-medium text-slate-600">No upcoming viewings</p><Link href="/buyer/properties" className="mt-3 inline-flex text-sm font-semibold text-blue-600">Browse properties</Link></div>}</section>
 
           {/* Recently Viewed Properties */}
           <div className="bg-white rounded-2xl border border-slate-200 p-8">
-            <h3 className="text-2xl font-light text-slate-900 mb-6">Recently Viewed</h3>
+            <h3 className="text-xl font-medium text-slate-900 mb-6">Recently viewed</h3>
 
-            {recentLoading ? <div className="space-y-4">{[1, 2, 3].map((item) => <div key={item} className="h-28 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />)}</div> : recentProperties.length > 0 ? <div className="space-y-4">
+            {recentLoading ? <div className="space-y-4" aria-label="Loading recently viewed properties">{[1, 2, 3].map((item) => <div key={item} className="rounded-xl border border-slate-200 p-4"><Skeleton className="h-20 w-full" /></div>)}</div> : recentProperties.length > 0 ? <div className="space-y-4">
               {recentProperties.map((property) => (
                 <Link
                   key={property.id}

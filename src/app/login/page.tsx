@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
@@ -12,27 +13,11 @@ import {
   getDoc,
 } from "firebase/firestore";
 import {
-  Mail,
-  Lock,
-  Eye,
-  EyeOff,
-  ArrowRight,
-  Sparkles,
-  ShieldCheck,
-  CalendarDays,
-} from "lucide-react";
-import {
   auth,
   db,
 } from "@/lib/firebase";
 import AppLogo from "@/components/AppLogo";
-
-const HERO_HEADLINES = [
-  "Find a place worth stepping into.",
-  "Explore every room before you visit.",
-  "See properties from a whole new angle.",
-  "Turn static images into immersive tours.",
-];
+import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -40,49 +25,32 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [error, setError] = useState("");
-  const [typedHeadline, setTypedHeadline] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("reason") === "deactivated") {
-      const timer = window.setTimeout(() => setError("This account has been deactivated. Contact an administrator if you believe this is a mistake."), 0);
+    const reason = new URLSearchParams(window.location.search).get("reason");
+    if (reason === "deactivated" || reason === "session-expired") {
+      const message = reason === "session-expired"
+        ? "Your session expired after eight hours. Please sign in again."
+        : "This account has been deactivated. Contact an administrator if you believe this is a mistake.";
+      const timer = window.setTimeout(() => setError(message), 0);
       return () => window.clearTimeout(timer);
     }
   }, []);
 
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      const timer = window.setTimeout(() => setTypedHeadline(HERO_HEADLINES[0]), 0);
-      return () => window.clearTimeout(timer);
-    }
-    let headlineIndex = 0;
-    let characterIndex = 0;
-    let deleting = false;
-    let timer = 0;
-    const animate = () => {
-      const headline = HERO_HEADLINES[headlineIndex];
-      characterIndex += deleting ? -1 : 1;
-      setTypedHeadline(headline.slice(0, characterIndex));
-      let delay = deleting ? 38 : 72;
-      if (!deleting && characterIndex === headline.length) {
-        deleting = true;
-        delay = 1800;
-      } else if (deleting && characterIndex === 0) {
-        deleting = false;
-        headlineIndex = (headlineIndex + 1) % HERO_HEADLINES.length;
-        delay = 350;
-      }
-      timer = window.setTimeout(animate, delay);
-    };
-    timer = window.setTimeout(animate, 350);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   const login = async () => {
     setError("");
+    setNotice("");
 
-    if (!email || !password) {
-      setError("Please fill all fields");
+    if (!email.trim()) {
+      setError("Enter your email address.");
+      return;
+    }
+    if (!password) {
+      setError("Enter your password.");
       return;
     }
 
@@ -92,7 +60,7 @@ export default function LoginPage() {
       const userCredential =
         await signInWithEmailAndPassword(
           auth,
-          email,
+          email.trim(),
           password
         );
 
@@ -120,24 +88,42 @@ export default function LoginPage() {
       }
 
     } catch (error: unknown) {
-      const err = error instanceof Error ? error.message : String(error);
-      setError(err);
+      const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+      setError(
+        code === "auth/invalid-credential" || code === "auth/user-not-found" || code === "auth/wrong-password"
+          ? "The email or password is incorrect."
+          : code === "auth/too-many-requests"
+            ? "Too many attempts. Please wait a moment and try again."
+            : code === "auth/network-request-failed"
+              ? "We could not connect. Check your internet connection and try again."
+              : "We could not sign you in. Please try again."
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !loading) {
-      login();
+  const resetPassword = async () => {
+    setError("");
+    setNotice("");
+    if (!email.trim()) {
+      setError("Enter your email address first, then select “Forgot password?”.");
+      return;
+    }
+    try {
+      setResettingPassword(true);
+      await sendPasswordResetEmail(auth, email.trim());
+      setNotice("Password reset instructions were sent to your email.");
+    } catch {
+      setError("We could not send the reset email. Check the address and try again.");
+    } finally {
+      setResettingPassword(false);
     }
   };
 
   return (
     <div className="grid min-h-screen bg-slate-50 lg:grid-cols-[1.08fr_0.92fr]">
-      
-      {/* Left Panel - Hero Section */}
-      <div className="relative hidden overflow-hidden bg-slate-950 p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16">
+      <div className="relative hidden overflow-hidden bg-slate-950 bg-[url('/background.png')] bg-cover bg-center p-12 text-white lg:flex lg:flex-col xl:p-16">
         <video
           autoPlay
           muted
@@ -147,173 +133,102 @@ export default function LoginPage() {
           poster="/background.png"
           aria-hidden="true"
           tabIndex={-1}
-          className="absolute inset-0 h-full w-full object-cover object-center"
+          className="absolute inset-0 h-full w-full object-cover object-center motion-reduce:hidden"
         >
           <source src="/login-background.mp4" type="video/mp4" />
         </video>
         <div className="absolute inset-0 bg-slate-950/35" />
         <div className="absolute inset-0 bg-gradient-to-r from-slate-950/35 via-slate-950/10 to-transparent" />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-slate-950/10" />
-
         <div className="relative z-10">
-          {/* Logo */}
-          <div className="flex items-center gap-3 mb-16">
-            <div className="theme-preserve-light w-12 h-12 bg-white rounded-2xl flex items-center justify-center flex-shrink-0">
-              <AppLogo className="h-10 w-10 object-contain" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-light tracking-tight">Real Estate</h1>
-              <p className="text-sm text-slate-400 font-light">by LiBot</p>
-            </div>
+          <div className="mb-16 flex items-center gap-3">
+            <AppLogo className="h-12 w-12 shrink-0 object-contain" />
+            <p className="text-2xl font-medium tracking-tight">LiBot</p>
           </div>
-
-          {/* Hero Content */}
-          <div>
-            <p className="mb-6 text-xs font-semibold uppercase tracking-[0.22em] text-blue-300">
-              Smarter property exploration
-            </p>
-            <h2 aria-label="Discover properties through LiBot" className="mb-7 min-h-[8rem] max-w-2xl text-5xl font-light leading-[1.08] xl:min-h-[9rem] xl:text-6xl">
-              <span aria-hidden="true">{typedHeadline}<span className="ml-1 inline-block h-[0.9em] w-0.5 translate-y-[0.08em] animate-pulse bg-blue-300" /></span>
-            </h2>
-            <p className="max-w-xl text-lg font-light leading-relaxed text-slate-300">
-              LiBot brings listings, reconstructed room panoramas, negotiations, and property viewing schedules into one clear workspace.
-            </p>
-          </div>
-        </div>
-
-        <div className="relative z-10 grid grid-cols-3 gap-4 border-t border-white/10 pt-8">
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"><Sparkles size={19} className="text-blue-300" /><p className="mt-3 text-sm font-semibold">Immersive tours</p><p className="mt-1 text-xs leading-5 text-slate-400">Static images reconstructed into room panoramas.</p></div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"><ShieldCheck size={19} className="text-emerald-300" /><p className="mt-3 text-sm font-semibold">Role-based access</p><p className="mt-1 text-xs leading-5 text-slate-400">Dedicated buyer, broker, and admin workspaces.</p></div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"><CalendarDays size={19} className="text-amber-300" /><p className="mt-3 text-sm font-semibold">Viewing schedules</p><p className="mt-1 text-xs leading-5 text-slate-400">Request and manage property appointments.</p></div>
+          <h2 className="mb-6 max-w-2xl text-5xl font-medium leading-[1.08] xl:text-6xl">
+            Manage every property interaction in one place.
+          </h2>
         </div>
       </div>
 
-      {/* Right Panel - Login Form */}
-      <div className="flex items-center justify-center p-5 sm:p-8 lg:bg-white lg:p-12">
-        <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:border-0 lg:p-0 lg:shadow-none">
-          
-          {/* Mobile Logo */}
-          <div className="lg:hidden mb-10 inline-flex items-center gap-2">
-            <div className="w-10 h-10 bg-slate-900 rounded-2xl flex items-center justify-center">
-              <AppLogo className="h-8 w-8 object-contain" />
-            </div>
+      <main className="flex items-center justify-center p-5 sm:p-8 lg:bg-white lg:p-12">
+        <div className="w-full max-w-md p-6 sm:p-8 lg:p-0">
+          <div className="mb-10 inline-flex items-center gap-2 lg:hidden">
+            <AppLogo className="h-10 w-10 object-contain" />
             <div>
               <p className="text-sm font-semibold text-slate-900">LiBot</p>
               <p className="text-xs text-slate-500">Real Estate</p>
             </div>
           </div>
+          <h1 className="mb-10 text-4xl font-light tracking-tight text-slate-900">Welcome back</h1>
 
-          {/* Header */}
-          <div className="mb-10">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Secure account access</p>
-            <h1 className="mb-3 text-4xl font-light tracking-tight text-slate-900">
-              Welcome back
-            </h1>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Sign in to continue to your LiBot workspace.
-            </p>
-          </div>
+          {error && <p id="login-error" role="alert" className="mb-6 rounded-xl border border-red-100 bg-red-50 p-4 text-sm leading-relaxed text-red-700">{error}</p>}
+          {notice && <p role="status" className="mb-6 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700">{notice}</p>}
 
-          {/* Error State */}
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 animate-slide-down">
-              <div className="w-5 h-5 rounded-full bg-red-200 flex-shrink-0 flex items-center justify-center mt-0.5">
-                <span className="text-xs text-red-600 font-semibold">!</span>
-              </div>
-              <p className="text-sm text-red-600 leading-relaxed">{error}</p>
+          <form className="space-y-5" onSubmit={(event) => { event.preventDefault(); void login(); }} aria-busy={loading}>
+            <div>
+              <label htmlFor="email" className="mb-3 block text-xs font-semibold uppercase tracking-wider text-slate-600">Email address</label>
+              <input
+                id="email"
+                type="email"
+                name="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
+                required
+                aria-describedby={error ? "login-error" : undefined}
+                placeholder="you@example.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                disabled={loading || resettingPassword}
+                className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              />
             </div>
-          )}
-
-          {/* Form */}
-          <div className="space-y-5 mb-8">
-            
-            {/* Email Input */}
-            <div className="group">
-              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-3">
-                Email Address
-              </label>
-              <div className="relative">
-                <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-600 transition-colors" />
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  disabled={loading}
-                  className="w-full h-12 pl-11 pr-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-              </div>
-            </div>
-
-            {/* Password Input */}
-            <div className="group">
-              <div className="mb-3 flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Password
-                </label>
-                <span className="text-xs text-slate-400">Use your registered password</span>
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-wider text-slate-600">Password</label>
+                <button type="button" onClick={() => void resetPassword()} disabled={loading || resettingPassword} className="text-xs font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50">
+                  {resettingPassword ? "Sending…" : "Forgot password?"}
+                </button>
               </div>
               <div className="relative">
-                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-600 transition-colors" />
                 <input
+                  id="password"
                   type={showPassword ? "text" : "password"}
+                  name="password"
+                  autoComplete="current-password"
+                  required
+                  aria-describedby={error ? "login-error" : undefined}
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyPress={handleKeyPress}
+                  onChange={(event) => setPassword(event.target.value)}
                   disabled={loading}
-                  className="w-full h-12 pl-11 pr-12 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-4 pr-14 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
+                  onClick={() => setShowPassword((visible) => !visible)}
                   disabled={loading}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors disabled:cursor-not-allowed"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
+                  className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-slate-400 hover:text-slate-600 disabled:cursor-not-allowed"
                 >
-                  {showPassword ? (
-                    <EyeOff size={16} />
-                  ) : (
-                    <Eye size={16} />
-                  )}
+                  {showPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
                 </button>
               </div>
             </div>
-
-          </div>
-
-          {/* Sign In Button */}
-          <button
-            onClick={login}
-            disabled={loading}
-            className="w-full h-12 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-700 text-white font-medium rounded-xl transition-all duration-200 flex items-center justify-center gap-2 group disabled:cursor-not-allowed shadow-sm hover:shadow-md active:scale-95"
-          >
-            {loading ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <>
-                Sign In
-                <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-              </>
-            )}
-          </button>
-
-          {/* Footer Links */}
-          <div className="mt-8 space-y-3 text-center">
+            <button type="submit" disabled={loading || resettingPassword} className="mt-8 flex h-12 w-full items-center justify-center rounded-xl bg-[#2563eb] font-semibold text-white shadow-sm hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-50">
+              {loading ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+          <div className="mt-8 space-y-4 text-center">
             <p className="text-sm text-slate-600">
-              {`Don't have an account?`}{" "}
-              <Link
-                href="/register/choose"
-                className="font-semibold text-slate-900 hover:text-slate-700 hover:underline transition-colors"
-              >
-                Create one
-              </Link>
+              Don&apos;t have an account? <Link href="/register/choose" className="font-semibold text-slate-900 hover:underline">Create one</Link>
             </p>
+            <Link href="/install" className="inline-block text-xs text-slate-500 hover:underline">Install LiBot</Link>
           </div>
-
         </div>
-      </div>
-
+      </main>
     </div>
   );
 }

@@ -1,0 +1,356 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasUserDocument() {
+      return signedIn() && exists(userPath());
+    }
+
+    function currentUser() {
+      return get(userPath()).data;
+    }
+
+    function isAdmin() {
+      return hasUserDocument()
+        && currentUser().role == "admin";
+    }
+
+    function isBroker() {
+      return hasUserDocument()
+        && currentUser().role == "broker";
+    }
+
+    function isBuyer() {
+      return hasUserDocument()
+        && currentUser().role == "buyer";
+    }
+
+    function isActive() {
+      return hasUserDocument()
+        && (
+          !("accountStatus" in currentUser())
+          || currentUser().accountStatus != "inactive"
+        );
+    }
+
+    /*
+     * USERS
+     */
+    match /users/{userId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role in ["buyer", "broker"]
+        && !request.resource.data.keys().hasAny([
+          "verifiedAt",
+          "rejectedAt",
+          "verifiedBy"
+        ])
+        && (!('verificationStatus' in request.resource.data)
+          || (request.resource.data.role == 'broker'
+            && request.resource.data.verificationStatus == 'pending'))
+        && (!('rejectionReason' in request.resource.data)
+          || request.resource.data.rejectionReason == null)
+        && (
+          !("accountStatus" in request.resource.data)
+          || request.resource.data.accountStatus == "active"
+        );
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && request.auth.uid == userId
+          && !request.resource.data
+            .diff(resource.data)
+            .affectedKeys()
+            .hasAny([
+              "role",
+              "accountStatus",
+              "verificationStatus",
+              "verifiedAt",
+              "rejectedAt",
+              "rejectionReason"
+            ])
+        );
+
+      allow delete: if isAdmin();
+      match /pushSubscriptions/{subscriptionId} {
+        allow read, write: if false;
+      }
+    }
+
+    /*
+     * PROPERTIES
+     */
+    match /properties/{propertyId} {
+      allow read: if true;
+
+      allow create: if isActive()
+        && isBroker()
+        && request.resource.data.brokerId == request.auth.uid;
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && isBroker()
+          && resource.data.brokerId == request.auth.uid
+          && request.resource.data.brokerId == resource.data.brokerId
+        );
+
+      allow delete: if isAdmin()
+        || (
+          isActive()
+          && isBroker()
+          && resource.data.brokerId == request.auth.uid
+        );
+    }
+
+    /*
+     * ROOM IMAGES
+     */
+    match /roomImages/{imageId} {
+      allow read: if true;
+
+      allow create: if isActive()
+        && isBroker()
+        && request.resource.data.propertyId is string
+        && get(
+          /databases/$(database)/documents/properties/$(request.resource.data.propertyId)
+        ).data.brokerId == request.auth.uid;
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && isBroker()
+          && resource.data.propertyId is string
+          && request.resource.data.propertyId == resource.data.propertyId
+          && get(
+            /databases/$(database)/documents/properties/$(resource.data.propertyId)
+          ).data.brokerId == request.auth.uid
+        );
+
+      allow delete: if isAdmin()
+        || (
+          isActive()
+          && isBroker()
+          && resource.data.propertyId is string
+          && get(
+            /databases/$(database)/documents/properties/$(resource.data.propertyId)
+          ).data.brokerId == request.auth.uid
+        );
+    }
+
+    /*
+     * VIRTUAL TOURS
+     */
+    match /roomTours/{tourId} {
+      allow read: if true;
+
+      allow create: if isActive()
+        && isBroker()
+        && request.resource.data.brokerId == request.auth.uid;
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && isBroker()
+          && resource.data.brokerId == request.auth.uid
+          && request.resource.data.brokerId == resource.data.brokerId
+          && request.resource.data.propertyId == resource.data.propertyId
+        );
+
+      allow delete: if isAdmin()
+        || (
+          isActive()
+          && isBroker()
+          && resource.data.brokerId == request.auth.uid
+        );
+    }
+
+    /*
+     * NEGOTIATIONS
+     */
+    match /negotiations/{negotiationId} {
+      allow read: if isAdmin()
+        || (
+          isActive()
+          && (
+            resource.data.buyerId == request.auth.uid
+            || resource.data.brokerId == request.auth.uid
+          )
+        );
+
+      allow create: if isActive()
+        && isBuyer()
+        && request.resource.data.buyerId == request.auth.uid
+        && request.resource.data.status == "active"
+        && request.resource.data.propertyId is string
+        && request.resource.data.brokerId ==
+          get(
+            /databases/$(database)/documents/properties/$(request.resource.data.propertyId)
+          ).data.brokerId;
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && (
+            resource.data.buyerId == request.auth.uid
+            || resource.data.brokerId == request.auth.uid
+          )
+          && request.resource.data.buyerId == resource.data.buyerId
+          && request.resource.data.brokerId == resource.data.brokerId
+          && request.resource.data.propertyId == resource.data.propertyId
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    /*
+     * VIEWING SCHEDULES
+     */
+    match /viewingSchedules/{scheduleId} {
+      allow read: if isAdmin()
+        || (
+          isActive()
+          && (
+            resource.data.buyerId == request.auth.uid
+            || resource.data.brokerId == request.auth.uid
+          )
+        );
+
+      allow create: if isActive()
+        && isBuyer()
+        && request.resource.data.buyerId == request.auth.uid
+        && request.resource.data.status == "pending"
+        && request.resource.data.propertyId is string
+        && request.resource.data.scheduledAt is timestamp
+        && request.resource.data.scheduledAt > request.time
+        && request.resource.data.durationMinutes in [30, 60, 90, 120]
+        && request.resource.data.brokerId ==
+          get(
+            /databases/$(database)/documents/properties/$(request.resource.data.propertyId)
+          ).data.brokerId;
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && request.resource.data
+            .diff(resource.data)
+            .affectedKeys()
+            .hasOnly(["status", "updatedAt"])
+          && (
+            (
+              isBroker()
+              && resource.data.brokerId == request.auth.uid
+              && (
+                (
+                  resource.data.status == "pending"
+                  && request.resource.data.status in [
+                    "confirmed",
+                    "rejected"
+                  ]
+                )
+                || (
+                  resource.data.status == "confirmed"
+                  && request.resource.data.status == "completed"
+                )
+              )
+            )
+            || (
+              isBuyer()
+              && resource.data.buyerId == request.auth.uid
+              && resource.data.status in ["pending", "confirmed"]
+              && request.resource.data.status == "cancelled"
+            )
+          )
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    /*
+     * VIRTUAL TOUR ANALYTICS
+     */
+    match /tourOpens/{tourOpenId} {
+      allow create: if isActive()
+        && isBuyer()
+        && request.resource.data.buyerId == request.auth.uid;
+
+      allow read: if isAdmin()
+        || (
+          isActive()
+          && (
+            resource.data.buyerId == request.auth.uid
+            || resource.data.brokerId == request.auth.uid
+          )
+        );
+
+      allow update: if isActive()
+        && isBuyer()
+        && resource.data.buyerId == request.auth.uid
+        && request.resource.data.buyerId == resource.data.buyerId
+        && request.resource.data.brokerId == resource.data.brokerId
+        && request.resource.data.propertyId == resource.data.propertyId;
+
+      allow delete: if isAdmin();
+    }
+
+    /*
+     * REPORTS
+     */
+    match /reports/{reportId} {
+      allow create: if isActive()
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.reporterRole in ["buyer", "broker"]
+        && request.resource.data.targetType in ["user", "property"]
+        && request.resource.data.targetId is string
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.details is string
+        && request.resource.data.details.size() >= 10
+        && request.resource.data.details.size() <= 1000
+        && request.resource.data.status == "open";
+
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.reporterId == request.auth.uid
+        );
+
+      allow update: if isAdmin()
+        || (
+          isActive()
+          && resource.data.reporterId == request.auth.uid
+          && resource.data.status in ["resolved", "dismissed"]
+          && request.resource.data.reporterId == resource.data.reporterId
+          && request.resource.data.reporterRole == resource.data.reporterRole
+          && request.resource.data.targetType == resource.data.targetType
+          && request.resource.data.targetId == resource.data.targetId
+          && request.resource.data.status == "open"
+          && request.resource.data.reason is string
+          && request.resource.data.details is string
+          && request.resource.data.details.size() >= 10
+          && request.resource.data.details.size() <= 1000
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    /*
+     * DENY EVERYTHING NOT EXPLICITLY ALLOWED
+     */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

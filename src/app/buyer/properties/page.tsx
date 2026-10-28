@@ -406,7 +406,7 @@ export default function BuyerPropertiesPage() {
                           <button aria-label={compareIds.includes(property.id) ? "Remove from comparison" : "Add to comparison"} onClick={(event) => { event.preventDefault(); toggleCompare(property.id); }} className={`absolute right-3 top-14 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition ${compareIds.includes(property.id) ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:text-blue-600"}`}><Scale size={17} /></button>
 
                           {/* Badge */}
-                          {tourPropertyIds.has(property.id) && <div className="absolute top-3 left-3 bg-blue-600 text-white text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1 shadow-md"><Zap size={14} />Virtual Tour</div>}
+                          {tourPropertyIds.has(property.id) && <div className="absolute top-3 left-3 flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md"><Zap size={14} />360° Tour Available</div>}
                           <div className={`absolute bottom-3 left-3 rounded-full px-3 py-1 text-xs font-semibold capitalize shadow-sm ${property.availabilityStatus === "sold" ? "bg-slate-900 text-white" : property.availabilityStatus === "reserved" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{property.availabilityStatus ?? "available"}</div>
                         </div>
 
@@ -456,8 +456,9 @@ export default function BuyerPropertiesPage() {
                                 ₱{property.price || "Contact"}
                               </p>
                             </div>
-                            <div className="p-3 bg-blue-600 text-white rounded-lg group-hover:bg-blue-700 transition-colors">
-                              <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                            <div className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2.5 text-xs font-semibold text-white group-hover:bg-blue-700">
+                              <span>{tourPropertyIds.has(property.id) ? "Start 360° tour" : "View details"}</span>
+                              <ChevronRight size={16} className="group-hover:translate-x-1" />
                             </div>
                           </div>
                         </div>
@@ -476,6 +477,7 @@ export default function BuyerPropertiesPage() {
                       ? `No properties match "${searchTerm}". Try adjusting your search terms.`
                       : "No properties available at the moment."}
                   </p>
+                  {(searchTerm || activeFilterCount > 0) && <button onClick={() => { setSearchTerm(""); setLocationFilter(""); setMinPrice(""); setMaxPrice(""); setMinBeds(""); setVirtualToursOnly(false); }} className="mt-5 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Clear search and filters</button>}
                 </div>
               )}
             </>
