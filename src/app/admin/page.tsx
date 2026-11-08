@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import {
@@ -42,7 +42,7 @@ import {
 import { auth, db } from "@/lib/firebase";
 import { isRemoteImageUrl, uploadImageToCloudinary } from "@/lib/cloudinary";
 import SafeImage from "@/components/SafeImage";
-import AppLogo from "@/components/AppLogo";
+import styles from "./dashboard.module.css";
 
 type AdminSection = "dashboard" | "buyers" | "brokers" | "verification" | "properties" | "reports" | "profile";
 type VerificationStatus = "pending" | "verified" | "rejected";
@@ -175,6 +175,7 @@ export default function AdminPage() {
   const router = useRouter();
   const [section, setSection] = useState<AdminSection>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
   const [admin, setAdmin] = useState<PlatformUser | null>(null);
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [users, setUsers] = useState<PlatformUser[]>([]);
@@ -190,6 +191,7 @@ export default function AdminPage() {
   const [signingOut, setSigningOut] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
+  const [removedNotificationIds, setRemovedNotificationIds] = useState<string[]>([]);
   const [reportDecision, setReportDecision] = useState<{ report: ReportRecord; status: "resolved" | "dismissed" } | null>(null);
   const [reportNote, setReportNote] = useState("");
 
@@ -246,8 +248,11 @@ export default function AdminPage() {
         try {
           const savedIds = window.localStorage.getItem(`admin-notifications-read:${currentUser.uid}`);
           setReadNotificationIds(savedIds ? JSON.parse(savedIds) : []);
+          const removedIds = window.localStorage.getItem(`admin-notifications-removed:${currentUser.uid}`);
+          setRemovedNotificationIds(removedIds ? JSON.parse(removedIds) : []);
         } catch {
           setReadNotificationIds([]);
+          setRemovedNotificationIds([]);
         }
         setAuthorized(true);
         await loadPlatformData();
@@ -299,7 +304,8 @@ export default function AdminPage() {
       .sort((a, b) => (toDate(b.createdAt)?.getTime() ?? 0) - (toDate(a.createdAt)?.getTime() ?? 0))
       .slice(0, 12);
   }, [properties, reports, users]);
-  const unreadCount = notifications.filter((notification) => !readNotificationIds.includes(notification.id)).length;
+  const visibleNotifications = notifications.filter((notification) => !removedNotificationIds.includes(notification.id));
+  const unreadCount = visibleNotifications.filter((notification) => !readNotificationIds.includes(notification.id)).length;
   const query = search.trim().toLowerCase();
   const filterUsers = (items: PlatformUser[]) => items.filter((user) =>
     !query || `${displayName(user)} ${user.email ?? ""} ${user.agencyName ?? ""}`.toLowerCase().includes(query),
@@ -441,6 +447,17 @@ export default function AdminPage() {
     }
   };
 
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !accountMenuRef.current?.contains(event.target)) setSidebarOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setSidebarOpen(false); };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [sidebarOpen]);
+
   if (authorized === null || (authorized && loadingData && !admin)) {
     return <div className="flex min-h-screen items-center justify-center bg-slate-50"><LoaderCircle className="animate-spin text-slate-700" size={38} /></div>;
   }
@@ -482,48 +499,36 @@ export default function AdminPage() {
     saveReadNotifications(Array.from(new Set([...readNotificationIds, ...notifications.map((notification) => notification.id)])));
   };
 
+  const removeNotification = (id: string) => {
+    const next = Array.from(new Set([...removedNotificationIds, id]));
+    setRemovedNotificationIds(next);
+    if (admin) window.localStorage.setItem(`admin-notifications-removed:${admin.id}`, JSON.stringify(next));
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      {sidebarOpen && <button aria-label="Close navigation" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-40 bg-slate-950/40 lg:hidden" />}
-      <aside className={`fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-2rem))] flex-col border-r border-slate-200 bg-white shadow-xl transition-transform lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="flex h-24 items-center gap-3 border-b border-slate-200 px-7">
-          <div className="relative h-11 w-11"><AppLogo className="h-11 w-11 object-contain" alt="LiBot" /></div>
-          <div><p className="font-semibold">LiBot Admin</p></div>
-          <button aria-label="Close menu" onClick={() => setSidebarOpen(false)} className="ml-auto p-2 lg:hidden"><X size={20} /></button>
-        </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto p-5">
-
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button key={item.id} onClick={() => selectSection(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${section === item.id ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}>
-                <Icon size={17} strokeWidth={1.5} aria-hidden="true" /><span>{item.label}</span>
-                {item.id === "verification" && pendingBrokers.length > 0 && <span className={`ml-auto rounded-full px-2 py-0.5 text-xs ${section === item.id ? "bg-white/15" : "bg-amber-100 text-amber-700"}`}>{pendingBrokers.length}</span>}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="border-t border-slate-200 p-5">
-          <div className="mb-3 rounded-xl bg-slate-50 px-4 py-3"><p className="truncate text-sm font-semibold">{admin ? displayName(admin) : "Administrator"}</p><p className="truncate text-xs text-slate-500">{admin?.email}</p></div>
-          <button onClick={handleSignOut} disabled={signingOut} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"><LogOut size={19} />{signingOut ? "Signing out..." : "Logout"}</button>
-        </div>
-      </aside>
-
-      <main className="lg:ml-72">
-        <header className="sticky top-0 z-30 flex min-h-20 items-center border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-8">
-          <button aria-label="Open navigation" onClick={() => setSidebarOpen(true)} className="mr-3 rounded-xl p-2 text-slate-700 hover:bg-slate-100 hover:text-blue-600 lg:hidden"><Menu size={23} /></button>
-          <div className="min-w-0"><h1 className="truncate text-lg font-semibold sm:text-xl">{navigation.find((item) => item.id === section)?.label}</h1></div>
+    <div className="min-h-screen bg-[#fbfaf8] text-slate-900">
+      <main>
+        <header className="sticky top-0 z-30 flex min-h-20 items-center border-b border-[#e9e8e3] bg-white/95 px-4 backdrop-blur sm:px-8">
+          <div className="min-w-0"><p className="text-xs font-bold uppercase tracking-widest text-[#087d7d]">LiBot Admin</p><h1 className="truncate text-lg font-semibold text-[#183c3e] sm:text-xl">{navigation.find((item) => item.id === section)?.label}</h1></div>
           <div className="relative ml-auto">
             <button aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)} className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
               <Bell size={19} />
               {unreadCount > 0 && <span className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{unreadCount > 9 ? "9+" : unreadCount}</span>}
             </button>
-            {notificationsOpen && <NotificationPanel notifications={notifications} readIds={readNotificationIds} onOpen={openNotification} onMarkAll={markAllNotificationsRead} />}
+            {notificationsOpen && <NotificationPanel notifications={visibleNotifications} readIds={readNotificationIds} onOpen={openNotification} onMarkAll={markAllNotificationsRead} onRemove={removeNotification} />}
           </div>
           <button onClick={loadPlatformData} disabled={loadingData} className="ml-2 shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:ml-3 sm:px-4 sm:text-sm">{loadingData ? "Refreshing..." : "Refresh"}</button>
+          <div ref={accountMenuRef} className="relative ml-2 sm:ml-3">
+            <button type="button" aria-label="Account menu" aria-expanded={sidebarOpen} aria-controls="admin-account-menu" onClick={() => setSidebarOpen((open) => !open)} className="flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 text-slate-700 hover:bg-slate-100"><CircleUserRound size={18} /><Menu size={19} /></button>
+            {sidebarOpen && <nav id="admin-account-menu" aria-label="Admin account" className="absolute right-0 top-[calc(100%+0.75rem)] z-50 max-h-[calc(100dvh-6rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl">
+              <div className="border-b border-slate-100 px-3 py-3"><p className="truncate text-sm font-semibold">{admin ? displayName(admin) : "Administrator"}</p><p className="mt-0.5 truncate text-xs text-slate-500">{admin?.email}</p></div>
+              <div className="py-2">{navigation.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => selectSection(item.id)} aria-current={section === item.id ? "page" : undefined} className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium ${section === item.id ? "bg-[#e7f2ef] text-[#076267]" : "text-slate-700 hover:bg-slate-50"}`}><Icon size={18} />{item.label}{item.id === "verification" && pendingBrokers.length > 0 && <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">{pendingBrokers.length}</span>}</button>; })}</div>
+              <div className="border-t border-slate-100 pt-2"><button type="button" onClick={handleSignOut} disabled={signingOut} className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"><LogOut size={18} />{signingOut ? "Signing out…" : "Sign out"}</button></div>
+            </nav>}
+          </div>
         </header>
 
-        <div className="p-4 sm:p-8 lg:p-10">
+        <div className="mx-auto max-w-[1440px] p-4 sm:p-8 lg:p-10">
           {actionError && <div role="alert" className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700"><span>{actionError}</span><button onClick={() => setActionError("")}><X size={17} /></button></div>}
           {section === "dashboard" && <Dashboard buyers={buyers} brokers={brokers} pending={pendingBrokers} properties={properties} onNavigate={selectSection} />}
           {(section === "buyers" || section === "brokers") && (
@@ -561,7 +566,7 @@ export default function AdminPage() {
   );
 }
 
-function NotificationPanel({ notifications, readIds, onOpen, onMarkAll }: { notifications: AdminNotification[]; readIds: string[]; onOpen: (notification: AdminNotification) => void; onMarkAll: () => void }) {
+function NotificationPanel({ notifications, readIds, onOpen, onMarkAll, onRemove }: { notifications: AdminNotification[]; readIds: string[]; onOpen: (notification: AdminNotification) => void; onMarkAll: () => void; onRemove: (id: string) => void }) {
   const hasUnread = notifications.some((notification) => !readIds.includes(notification.id));
   const toneStyles = {
     amber: "bg-amber-100 text-amber-700",
@@ -577,10 +582,13 @@ function NotificationPanel({ notifications, readIds, onOpen, onMarkAll }: { noti
     <div className="max-h-[28rem] overflow-y-auto">
       {notifications.map((notification) => {
         const unread = !readIds.includes(notification.id);
-        return <button key={notification.id} onClick={() => onOpen(notification)} className={`flex w-full gap-3 border-b border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50 ${unread ? "bg-blue-50/40" : "bg-white"}`}>
-          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${toneStyles[notification.tone]}`}><Bell size={16} /></span>
-          <span className="min-w-0 flex-1"><span className="flex items-start gap-2"><span className={`text-sm text-slate-900 ${unread ? "font-semibold" : "font-medium"}`}>{notification.title}</span>{unread && <span aria-label="Unread" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-600" />}</span><span className="mt-1 block truncate text-xs text-slate-500">{notification.detail}</span><span className="mt-1.5 block text-[11px] font-medium text-slate-400">{formatNotificationTime(notification.createdAt)}</span></span>
-        </button>;
+        return <div key={notification.id} className={`flex items-start gap-2 border-b border-slate-100 px-5 py-3 ${unread ? "bg-blue-50/40" : "bg-white"}`}>
+          <button onClick={() => onOpen(notification)} className="flex min-w-0 flex-1 gap-3 py-1 text-left transition hover:opacity-80">
+            <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${toneStyles[notification.tone]}`}><Bell size={16} /></span>
+            <span className="min-w-0 flex-1"><span className="flex items-start gap-2"><span className={`text-sm text-slate-900 ${unread ? "font-semibold" : "font-medium"}`}>{notification.title}</span>{unread && <span aria-label="Unread" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-600" />}</span><span className="mt-1 block truncate text-xs text-slate-500">{notification.detail}</span><span className="mt-1.5 block text-[11px] font-medium text-slate-400">{formatNotificationTime(notification.createdAt)}</span></span>
+          </button>
+          <button type="button" aria-label={`Remove ${notification.title} notification`} title="Remove notification" onClick={() => onRemove(notification.id)} className="mt-1 rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"><Trash2 size={16} /></button>
+        </div>;
       })}
       {notifications.length === 0 && <div className="px-6 py-10 text-center"><Bell className="mx-auto text-slate-300" size={30} /><p className="mt-3 text-sm font-medium text-slate-600">You&apos;re all caught up</p><p className="mt-1 text-xs text-slate-400">New platform activity will appear here.</p></div>}
     </div>
@@ -595,14 +603,14 @@ function Dashboard({ buyers, brokers, pending, properties, onNavigate }: { buyer
     { label: "Property Listings", value: properties.length, target: "properties" as const },
   ];
   return (
-    <div className="space-y-8">
-      <h2 className="text-3xl font-medium tracking-tight">Overview</h2>
-      <div className="summary-strip">
-        {cards.map(({ label, value, target }) => <button key={label} onClick={() => onNavigate(target)} className="text-left"><p className="summary-label">{label}</p><p className="summary-value">{value}</p></button>)}
+    <div className={`${styles.dashboard} space-y-8`}>
+      <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#087d7d]">Platform workspace</p><h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#183c3e] sm:text-4xl">Overview</h2><p className="mt-2 text-sm text-[#71817d]">Accounts, listings, and broker reviews in one place.</p></div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map(({ label, value, target }) => <button key={label} onClick={() => onNavigate(target)} className={styles.statCard}><p className="text-xs font-medium text-[#75817e]">{label}</p><p className="mt-2 text-3xl font-semibold text-[#183c3e]">{value}</p><span className="mt-3 inline-block text-xs font-semibold text-[#076267]">View details →</span></button>)}
       </div>
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h3 className="text-lg font-semibold">Pending broker applications</h3><button onClick={() => onNavigate("verification")} className="text-sm font-semibold text-blue-600">View queue</button></div><div className="mt-5 space-y-3">{pending.slice(0, 5).map((broker) => <div key={broker.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 p-4"><Avatar user={broker} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{displayName(broker)}</p><p className="truncate text-xs text-slate-500">{broker.agencyName || "Independent broker"}</p></div><StatusBadge status="pending" /></div>)}{pending.length === 0 && <EmptyState message="No broker applications are waiting for review." />}</div></div>
-        <section className="border-t border-slate-200 py-6">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h3 className="text-lg font-medium text-slate-900">Accounts</h3>
           <dl className="mt-5 divide-y divide-slate-200 text-sm">
             <div className="flex justify-between gap-4 py-4"><dt className="text-slate-500">Active buyers</dt><dd className="font-medium">{buyers.filter((buyer) => buyer.accountStatus !== "inactive").length}</dd></div>

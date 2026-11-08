@@ -1,23 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  LogOut,
   Home,
-  Heart,
-  Settings,
-  Menu,
-  Search,
-  ChevronDown,
-  ChevronRight,
-  UserRound,
-  Eye,
-  MessageSquare,
   CalendarDays,
-  Clock3,
-  MapPin,
+  ArrowUpRight,
+  Search,
+  X,
+  ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { collection, doc, getDoc, getDocs, onSnapshot, query, Timestamp, where } from "firebase/firestore";
@@ -26,8 +19,8 @@ import { isRemoteImageUrl } from "@/lib/cloudinary";
 import NotificationCenter from "@/components/NotificationCenter";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
 import SafeImage from "@/components/SafeImage";
-import DashboardSidebar, { type DashboardNavItem } from "@/components/DashboardSidebar";
-import Skeleton from "@/components/Skeleton";
+import BuyerAccountMenu from "@/components/BuyerAccountMenu";
+import styles from "./dashboard.module.css";
 
 type RecentProperty = {
   id: string;
@@ -38,42 +31,26 @@ type RecentProperty = {
   viewedAt?: Timestamp;
 };
 
+type FeaturedProperty = { id: string; title?: string; location?: string; price?: string | number; image?: string; propertyType?: string; beds?: number; baths?: number };
+
 type ViewingSchedule = { id: string; propertyId?: string; propertyTitle?: string; propertyLocation?: string; brokerName?: string; scheduledAt?: Timestamp; durationMinutes?: number; status?: "pending" | "confirmed" | "completed" | "cancelled" | "rejected" };
-
-const buyerNavigation: DashboardNavItem[] = [
-  { href: "/buyer", label: "Dashboard", icon: Home, exact: true },
-  { href: "/buyer/properties", label: "Browse Properties", icon: Search },
-  { href: "/buyer/favorites", label: "Favorites", icon: Heart },
-  { href: "/buyer/negotiations", label: "Negotiations", icon: MessageSquare },
-  { href: "/buyer/calendar", label: "Viewing Calendar", icon: CalendarDays },
-  { href: "/buyer/profile", label: "Profile", icon: UserRound },
-  { href: "/buyer/settings", label: "Settings", icon: Settings },
-];
-
-function viewedTime(value?: Timestamp) {
-  if (!value?.toDate) return "Recently";
-  const date = value.toDate();
-  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60_000));
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return days < 7 ? `${days}d ago` : date.toLocaleDateString("en-PH", { month: "short", day: "numeric" });
-}
 
 export default function BuyerDashboard() {
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [buyerName, setBuyerName] = useState("Buyer");
   const [profilePicture, setProfilePicture] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [recentProperties, setRecentProperties] = useState<RecentProperty[]>([]);
   const [recentLoading, setRecentLoading] = useState(true);
-  const [inquiryCount, setInquiryCount] = useState(0);
   const [schedules, setSchedules] = useState<ViewingSchedule[]>([]);
   const [dashboardOpenedAt] = useState(() => Date.now());
+  const [featuredProperties, setFeaturedProperties] = useState<FeaturedProperty[]>([]);
+  const [tourPropertyIds, setTourPropertyIds] = useState<Set<string>>(new Set());
+  const [listingsLoading, setListingsLoading] = useState(true);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [propertyType, setPropertyType] = useState("");
+  const searchRef = useRef<HTMLDivElement>(null);
   const { favoriteIds } = useBuyerFavorites();
 
   useEffect(() => {
@@ -82,17 +59,12 @@ export default function BuyerDashboard() {
         setBuyerName("Buyer");
         setProfilePicture(null);
         setRecentProperties([]);
-        setInquiryCount(0);
         setRecentLoading(false);
         return;
       }
 
       try {
-        const [userDoc, inquirySnapshot] = await Promise.all([
-          getDoc(doc(db, "users", currentUser.uid)),
-          getDocs(query(collection(db, "negotiations"), where("buyerId", "==", currentUser.uid))),
-        ]);
-        setInquiryCount(inquirySnapshot.size);
+        const userDoc = await getDoc(doc(db, "users", currentUser.uid));
         const data = userDoc.data();
         const firstName = data?.firstName?.trim()
           || data?.name?.trim().split(/\s+/)[0]
@@ -132,7 +104,6 @@ export default function BuyerDashboard() {
         setBuyerName(currentUser.displayName?.trim().split(/\s+/)[0] || "Buyer");
         setProfilePicture(null);
         setRecentProperties([]);
-        setInquiryCount(0);
       } finally {
         setRecentLoading(false);
       }
@@ -153,6 +124,58 @@ export default function BuyerDashboard() {
     return () => { stopSchedules(); stopAuth(); };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadListings() {
+      try {
+        const [active, legacy, tours] = await Promise.all([
+          getDocs(query(collection(db, "properties"), where("status", "==", "active"))),
+          getDocs(query(collection(db, "properties"), where("status", "==", null))),
+          getDocs(query(collection(db, "roomTours"), where("status", "==", "published"))),
+        ]);
+        const listings = [...new Map([...active.docs, ...legacy.docs].map((item) => [item.id, item])).values()]
+          .map((item) => ({ id: item.id, ...item.data() } as FeaturedProperty));
+        const chunks = Array.from({ length: Math.ceil(listings.length / 30) }, (_, index) => listings.slice(index * 30, index * 30 + 30).map((item) => item.id));
+        const covers = new Map<string, string>();
+        const roomSnapshots = await Promise.all(chunks.map((ids) => getDocs(query(collection(db, "roomImages"), where("propertyId", "in", ids)))))
+          .catch(() => []);
+        roomSnapshots.forEach((snapshot) => snapshot.docs.forEach((item) => {
+          const data = item.data();
+          const cover = Array.isArray(data.imageUrls) ? data.imageUrls.find(isRemoteImageUrl) : undefined;
+          if (typeof data.propertyId === "string" && cover && !covers.has(data.propertyId)) covers.set(data.propertyId, cover);
+        }));
+        if (!cancelled) {
+          setFeaturedProperties(listings.map((item) => ({ ...item, image: isRemoteImageUrl(item.image) ? item.image : covers.get(item.id) })));
+          setTourPropertyIds(new Set(tours.docs.filter((item) => item.data().panoramaUrl).map((item) => String(item.data().propertyId))));
+        }
+      } catch (error) {
+        console.error("Unable to load dashboard listings:", error);
+      } finally {
+        if (!cancelled) setListingsLoading(false);
+      }
+    }
+    void loadListings();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!searchExpanded) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Node && !searchRef.current?.contains(event.target)) setSearchExpanded(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setSearchExpanded(false); };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+  }, [searchExpanded]);
+
+  const openSearch = () => {
+    const params = new URLSearchParams();
+    if (searchTerm.trim()) params.set("q", searchTerm.trim());
+    if (propertyType) params.set("type", propertyType);
+    router.push(`/buyer/properties${params.size ? `?${params}` : ""}`);
+  };
+
   const upcomingViewings = schedules
     .filter((item) => item.scheduledAt?.toMillis && item.scheduledAt.toMillis() >= dashboardOpenedAt && ["pending", "confirmed"].includes(item.status ?? ""))
     .sort((first, second) => first.scheduledAt!.toMillis() - second.scheduledAt!.toMillis())
@@ -165,7 +188,6 @@ export default function BuyerDashboard() {
 
     try {
       await signOut(auth);
-      setUserMenuOpen(false);
       router.replace("/login");
     } catch (error) {
       console.error("Unable to sign out:", error);
@@ -173,125 +195,55 @@ export default function BuyerDashboard() {
     }
   };
 
+  const tourHomes = featuredProperties.filter((property) => tourPropertyIds.has(property.id));
+  const iloiloHomes = featuredProperties.filter((property) => /iloilo/i.test(property.location ?? ""));
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <DashboardSidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        items={buyerNavigation}
-        footer={<button type="button" onClick={handleSignOut} disabled={signingOut} className="flex min-h-12 w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"><LogOut size={19} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>}
-      />
-
-      {/* Main Content */}
-      <main className="lg:ml-64">
-        {/* Top Navigation */}
-        <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-          <div className="flex min-h-20 items-center justify-between gap-4 px-4 py-4 sm:px-6">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                aria-label="Open navigation"
-                aria-expanded={sidebarOpen}
-                className="rounded-lg p-2 text-slate-700 transition-colors hover:bg-slate-100 hover:text-blue-600 lg:hidden"
-              >
-                <Menu size={24} />
-              </button>
-              <h1 className="text-2xl font-light text-slate-900">Dashboard</h1>
-            </div>
-
-            <div className="flex items-center gap-2 sm:gap-3">
-              <NotificationCenter audience="buyer" />
-
-              <div className="relative">
-                <button
-                  onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  aria-label="Open profile menu"
-                  aria-expanded={userMenuOpen}
-                  className="flex h-11 items-center gap-3 rounded-xl border border-transparent px-2 text-left transition-all hover:border-slate-200 hover:bg-slate-50 sm:pr-3"
-                >
-                  <div
-                    role={profilePicture ? "img" : undefined}
-                    aria-label={profilePicture ? `${buyerName}'s profile picture` : undefined}
-                    style={profilePicture ? { backgroundImage: `url(${profilePicture})` } : undefined}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-700 bg-cover bg-center text-white shadow-sm"
-                  >
-                    {!profilePicture && <UserRound size={18} aria-hidden="true" />}
-                  </div>
-                  <span className="hidden max-w-32 truncate text-sm font-medium text-slate-700 sm:block">
-                    {buyerName}
-                  </span>
-                  <ChevronDown
-                    size={16}
-                    className={`text-slate-400 transition-transform ${userMenuOpen ? "rotate-180" : ""}`}
-                  />
-                </button>
-
-                {userMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
-                    <Link
-                      href="/buyer/profile"
-                      className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-                    >
-                      <UserRound size={17} />
-                      View Profile
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={handleSignOut}
-                      disabled={signingOut}
-                      className="mt-1 flex w-full items-center gap-3 rounded-lg border-t border-slate-100 px-3 py-2.5 text-left text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <LogOut size={17} />
-                      {signingOut ? "Signing Out..." : "Sign Out"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Page Content */}
-        <div className="p-6 lg:p-10">
-          <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-            <h2 className="text-3xl font-medium tracking-tight text-slate-900">Your property search</h2>
-            <Link href="/buyer/properties" className="rounded-md bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-800">Browse properties</Link>
-          </div>
-          <div className="summary-strip mb-10">
-            <div><p className="summary-label">Properties viewed</p><p className="summary-value">{recentProperties.length}</p></div>
-            <Link href="/buyer/favorites"><p className="summary-label">Favorites</p><p className="summary-value">{favoriteIds.length}</p></Link>
-            <Link href="/buyer/negotiations"><p className="summary-label">Inquiries</p><p className="summary-value">{inquiryCount}</p></Link>
-            <Link href="/buyer/calendar"><p className="summary-label">Upcoming viewings</p><p className="summary-value">{upcomingViewings.length}</p></Link>
-          </div>
-
-          <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8"><div className="mb-6 flex items-center justify-between gap-4"><div><h3 className="text-xl font-medium text-slate-900">Upcoming viewings</h3></div><Link href="/buyer/calendar" className="shrink-0 text-sm font-semibold text-blue-600">View calendar →</Link></div>{upcomingViewings.length ? <div className="grid gap-3 lg:grid-cols-3">{upcomingViewings.map((item) => { const date = item.scheduledAt!.toDate(); return <Link key={item.id} href="/buyer/calendar" className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 hover:bg-blue-50/30"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{item.propertyTitle || "Property viewing"}</p><p className="mt-1 text-xs text-slate-500">with {item.brokerName || "Property broker"}</p></div><span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase ${item.status === "confirmed" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></div><div className="mt-4 space-y-2 text-xs text-slate-500"><p className="flex items-center gap-2"><CalendarDays size={14} />{date.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })}</p><p className="flex items-center gap-2"><Clock3 size={14} />{date.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })} · {item.durationMinutes ?? 60} minutes</p>{item.propertyLocation && <p className="flex items-center gap-2"><MapPin size={14} /><span className="truncate">{item.propertyLocation}</span></p>}</div></Link>; })}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center"><p className="mt-3 text-sm font-medium text-slate-600">No upcoming viewings</p><Link href="/buyer/properties" className="mt-3 inline-flex text-sm font-semibold text-blue-600">Browse properties</Link></div>}</section>
-
-          {/* Recently Viewed Properties */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-8">
-            <h3 className="text-xl font-medium text-slate-900 mb-6">Recently viewed</h3>
-
-            {recentLoading ? <div className="space-y-4" aria-label="Loading recently viewed properties">{[1, 2, 3].map((item) => <div key={item} className="rounded-xl border border-slate-200 p-4"><Skeleton className="h-20 w-full" /></div>)}</div> : recentProperties.length > 0 ? <div className="space-y-4">
-              {recentProperties.map((property) => (
-                <Link
-                  key={property.id}
-                  href={`/buyer/properties/${property.id}`}
-                  className="group flex items-center gap-4 p-4 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all"
-                >
-                  <div className="relative flex h-24 w-24 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-slate-200 text-slate-400">{property.image ? <SafeImage src={property.image} alt={`${property.title || "Property"} cover`} fill sizes="96px" className="object-cover" /> : <Home size={28} />}</div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-semibold text-slate-900 mb-1 group-hover:text-blue-600 transition-colors">
-                      {property.title || "Untitled property"}
-                    </h4>
-                    <p className="text-sm text-slate-600 mb-2">{property.location || "Location not specified"}</p>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1"><p className="text-lg font-semibold text-slate-900">₱{property.price ? Number(property.price).toLocaleString("en-PH") : "Contact broker"}</p><span className="text-xs text-slate-400">Viewed {viewedTime(property.viewedAt)}</span></div>
-                  </div>
-                  <ChevronRight size={20} className="text-slate-400 group-hover:translate-x-1 transition-transform" />
-                </Link>
-              ))}
-            </div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center"><Eye className="mx-auto text-slate-300" size={32} /><h4 className="mt-4 font-semibold text-slate-700">No recently viewed properties</h4><p className="mt-2 text-sm text-slate-500">Properties you open will appear here automatically.</p><Link href="/buyer/properties" className="mt-5 inline-flex rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white">Browse properties</Link></div>}
-          </div>
+    <div className="min-h-screen bg-[#fbfaf8] text-[#183c3e]">
+      <header className="sticky top-0 z-30 border-b border-[#ebe8e2] bg-white/95 backdrop-blur-md">
+        <div className="mx-auto flex h-[76px] max-w-[1440px] items-center justify-between gap-4 px-5 sm:px-8">
+          <Link href="/buyer" className="text-2xl font-bold tracking-tight text-[#076267]">LiBot</Link>
+          <div className="flex items-center gap-2"><NotificationCenter audience="buyer" /><BuyerAccountMenu onSignOut={handleSignOut} signingOut={signingOut} photo={profilePicture} /></div>
         </div>
+        <div ref={searchRef} className={`${styles.searchWrap} ${searchExpanded ? styles.searchExpanded : ""}`}>
+          <div className={styles.searchBar}>
+            <button type="button" onClick={() => setSearchExpanded(true)} className={styles.searchField}><span className={styles.searchLabel}>Where</span><span className={styles.searchValue}>{searchTerm || "Search Iloilo homes"}</span></button>
+            <span className={styles.searchDivider} />
+            <button type="button" onClick={() => setSearchExpanded(true)} className={styles.searchField}><span className={styles.searchLabel}>Type</span><span className={styles.searchValue}>{propertyType || "Any property"}</span></button>
+            <button type="button" onClick={openSearch} aria-label="Search properties" className={styles.searchButton}><Search size={19} /><span className={styles.searchButtonText}>Search</span></button>
+          </div>
+          {searchExpanded && <div className={styles.searchPanel}>
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#6d7a79]" htmlFor="dashboard-search">Location or property</label>
+            <input id="dashboard-search" autoFocus value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") openSearch(); }} placeholder="Try Jaro, Iloilo" className="mt-2 h-12 w-full rounded-xl border border-stone-200 px-4 text-sm outline-none focus:border-[#076267]" />
+            <div className="mt-4 flex flex-wrap gap-2">{["", "House", "Condo", "Apartment", "Lot"].map((type) => <button key={type} type="button" onClick={() => setPropertyType(type)} className={`rounded-full border px-4 py-2 text-sm ${propertyType === type ? "border-[#076267] bg-[#e7f2ef] text-[#076267]" : "border-stone-200 text-stone-600"}`}>{type || "Any type"}</button>)}</div>
+            <div className="mt-5 flex justify-between"><button type="button" onClick={() => setSearchExpanded(false)} className="flex items-center gap-1 text-sm text-stone-500"><X size={16} /> Close</button><button type="button" onClick={openSearch} className="rounded-xl bg-[#076267] px-5 py-2.5 text-sm font-semibold text-white">Show properties</button></div>
+          </div>}
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-[1440px] px-5 pb-16 pt-9 sm:px-8">
+        <div className={`${styles.intro} mb-9`}><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#087d7d]">Your home search</p><h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Find a place worth exploring, {buyerName}.</h1><p className="mt-2 text-sm text-[#637270]">Discover homes around Iloilo and step inside with a virtual tour.</p></div>
+        <PropertyRail title="Homes you can tour" description="Take a closer look before you visit." properties={tourHomes} loading={listingsLoading} tourPropertyIds={tourPropertyIds} empty="Virtual tours are coming soon." />
+        <div className={`${styles.quickLinks} my-10 grid gap-3 md:grid-cols-3`}>
+          <Link href="/buyer/properties" className={styles.quickLink}><Search size={26} /><span><strong>Explore all homes</strong><small>Browse available properties</small></span><ArrowUpRight size={18} /></Link>
+          <Link href="/buyer/favorites" className={styles.quickLink}><HeartIcon /><span><strong>Your favorites</strong><small>{favoriteIds.length} saved {favoriteIds.length === 1 ? "home" : "homes"}</small></span><ArrowUpRight size={18} /></Link>
+          <Link href="/buyer/calendar" className={styles.quickLink}><CalendarDays size={26} /><span><strong>Upcoming viewings</strong><small>{upcomingViewings.length} scheduled</small></span><ArrowUpRight size={18} /></Link>
+        </div>
+        <PropertyRail title="Explore Iloilo" description="Local homes, ready for your next chapter." properties={iloiloHomes.length ? iloiloHomes : featuredProperties} loading={listingsLoading} tourPropertyIds={tourPropertyIds} empty="No homes available right now." />
+        {(recentLoading || recentProperties.length > 0) && <PropertyRail title="Recently viewed" description="Pick up where you left off." properties={recentProperties} loading={recentLoading} tourPropertyIds={tourPropertyIds} empty="" />}
+        {upcomingViewings.length > 0 && <section className="mt-12"><div className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-semibold">Upcoming viewings</h2><Link href="/buyer/calendar" className="text-sm font-semibold text-[#076267]">View calendar →</Link></div><div className="grid gap-3 md:grid-cols-3">{upcomingViewings.map((item) => <Link key={item.id} href="/buyer/calendar" className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"><p className="font-semibold">{item.propertyTitle || "Property viewing"}</p><p className="mt-2 text-sm text-stone-500">{item.scheduledAt!.toDate().toLocaleDateString("en-PH", { month: "short", day: "numeric" })} · {item.scheduledAt!.toDate().toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}</p></Link>)}</div></section>}
       </main>
     </div>
   );
+}
+
+function HeartIcon() { return <span aria-hidden="true" className="text-2xl leading-none">♡</span>; }
+
+function PropertyRail({ title, description, properties, loading, tourPropertyIds, empty }: { title: string; description: string; properties: FeaturedProperty[]; loading: boolean; tourPropertyIds: Set<string>; empty: string }) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * 640, behavior: "smooth" });
+  return <section className={styles.railSection}>
+    <div className="mb-4 flex items-end justify-between gap-4"><div><h2 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2><p className="mt-1 text-sm text-[#75817e]">{description}</p></div><div className="hidden gap-2 sm:flex"><button type="button" onClick={() => scroll(-1)} aria-label={`Scroll ${title} left`} className={styles.railArrow}><ArrowLeft size={17} /></button><button type="button" onClick={() => scroll(1)} aria-label={`Scroll ${title} right`} className={styles.railArrow}><ArrowRight size={17} /></button></div></div>
+    {loading ? <div className={styles.rail}>{[1, 2, 3, 4, 5].map((item) => <div key={item} className={`${styles.propertyCard} h-64 animate-pulse rounded-2xl bg-stone-200`} />)}</div> : properties.length ? <div ref={railRef} className={styles.rail}>{properties.map((property) => <Link key={property.id} href={`/buyer/properties/${property.id}`} className={styles.propertyCard}><div className={styles.propertyImage}>{property.image ? <SafeImage src={property.image} alt={property.title || "Property"} fill sizes="(max-width: 640px) 70vw, 260px" className="object-cover" /> : <div className="flex h-full items-center justify-center bg-[#e8efed] text-[#92aba7]"><Home size={40} /></div>}{tourPropertyIds.has(property.id) && <span className={styles.tourBadge}>360° Tour</span>}</div><p className="mt-2 truncate text-sm font-semibold">{property.title || "Home in Iloilo"}</p><p className="mt-0.5 truncate text-xs text-[#75817e]">{property.location || "Iloilo, Philippines"}</p><p className="mt-1 text-xs"><strong>₱{property.price ? Number(property.price).toLocaleString("en-PH") : "Contact broker"}</strong>{property.beds ? ` · ${property.beds} beds` : ""}</p></Link>)}</div> : <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-6 py-10 text-sm text-stone-500">{empty}</div>}
+  </section>;
 }

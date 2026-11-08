@@ -4,16 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  BadgeCheck,
   Bell,
-  CalendarDays,
   Camera,
   ChevronRight,
   Mail,
   MapPin,
   Phone,
   Settings,
-  ShieldCheck,
   UserRound,
   X,
 } from "lucide-react";
@@ -22,6 +19,7 @@ import { collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, Times
 import { auth, db } from "@/lib/firebase";
 import { isRemoteImageUrl, uploadImageToCloudinary } from "@/lib/cloudinary";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
+import profileStyles from "@/components/ProfilePage.module.css";
 
 type BuyerProfile = {
   uid: string;
@@ -286,23 +284,21 @@ export default function BuyerProfilePage() {
   };
 
   const storedFullName = [buyer?.firstName?.trim(), buyer?.lastName?.trim()].filter(Boolean).join(" ");
-  const buyerName = storedFullName || buyer?.name?.trim() || "John Reyes";
-  const buyerEmail = buyer?.email ?? "john.reyes@example.com";
-  const buyerPhone = buyer?.phone ?? "+63 917 555 0192";
-  const buyerLocation = [buyer?.preferredProvince, buyer?.preferredCity].filter(Boolean).join(", ") || "Metro Manila, Philippines";
-  const buyerBudget = buyer?.budgetRange ?? "PHP 2M - PHP 8M";
-  const buyerPropertyType = buyer?.preferredPropertyType ?? "Condo, House & Lot";
+  const buyerName = storedFullName || buyer?.name?.trim() || "Buyer";
+  const buyerEmail = buyer?.email || "Not provided";
+  const buyerPhone = buyer?.phone || "Not provided";
+  const buyerLocation = [buyer?.preferredProvince, buyer?.preferredCity].filter(Boolean).join(", ") || "Not set";
+  const buyerBudget = buyer?.budgetRange || "Not set";
+  const buyerPropertyType = buyer?.preferredPropertyType || "Not set";
   const buyerOccupation = buyer?.occupation ?? "Not specified";
-  const buyerBio = buyer?.shortBio ?? "Add a short bio to help brokers understand your goals.";
-  const buyerProfilePicture = buyer?.profilePicture ? "Uploaded" : "No profile picture uploaded";
-  const termsStatus = buyer?.termsAccepted && buyer?.privacyPolicyAccepted ? "Accepted" : "Pending";
+  const buyerBio = buyer?.shortBio || "Add a short bio in Edit profile.";
   const memberSince = buyer?.createdAt
     ? "toDate" in buyer.createdAt && typeof buyer.createdAt.toDate === "function"
       ? buyer.createdAt.toDate().toLocaleDateString("en-US", { month: "long", year: "numeric" })
       : buyer.createdAt instanceof Date
         ? buyer.createdAt.toLocaleDateString("en-US", { month: "long", year: "numeric" })
         : "Recently"
-    : "March 2026";
+    : "Not available";
 
   if (loading) {
     return (
@@ -339,10 +335,10 @@ export default function BuyerProfilePage() {
 
         {editing && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
-            <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
+            <div role="dialog" aria-modal="true" aria-labelledby="edit-buyer-title" className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
               <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5 sm:px-8">
                 <div>
-                  <h2 className="text-xl font-semibold text-slate-900">Edit profile</h2>
+                  <h2 id="edit-buyer-title" className="text-xl font-semibold text-slate-900">Edit profile</h2>
                   <p className="mt-1 text-sm text-slate-500">Keep your buyer details and preferences up to date.</p>
                 </div>
                 <button
@@ -469,162 +465,43 @@ export default function BuyerProfilePage() {
           </div>
         )}
 
-        <section className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-            <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-5">
-                <div className="flex h-24 w-24 flex-shrink-0 items-center justify-center overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 to-slate-600 p-1 shadow-lg">
-                  <div
-                    role={buyer?.profilePicture ? "img" : undefined}
-                    aria-label={buyer?.profilePicture ? `${buyerName}'s profile picture` : undefined}
-                    style={buyer?.profilePicture ? { backgroundImage: `url(${buyer.profilePicture})` } : undefined}
-                    className="flex h-full w-full items-center justify-center overflow-hidden rounded-[1.35rem] bg-white bg-cover bg-center"
-                  >
-                    {!buyer?.profilePicture && <UserRound size={42} className="text-slate-900" />}
-                  </div>
+        <section className={`${profileStyles.hero} overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm`}>
+          <div className={`${profileStyles.banner} h-24 sm:h-28`} />
+          <div className="px-5 pb-6 sm:px-8">
+            <div className="-mt-12 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                <div className="rounded-3xl bg-white p-1.5 shadow-lg">
+                  <div role={buyer?.profilePicture ? "img" : undefined} aria-label={buyer?.profilePicture ? `${buyerName}'s profile picture` : undefined} style={buyer?.profilePicture ? { backgroundImage: `url(${buyer.profilePicture})` } : undefined} className="flex h-24 w-24 items-center justify-center rounded-[1.25rem] bg-slate-100 bg-cover bg-center text-slate-500 sm:h-28 sm:w-28">{!buyer?.profilePicture && <UserRound size={42} />}</div>
                 </div>
-
-                <div>
-                  <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                    <BadgeCheck size={14} />
-                    Verified buyer
-                  </div>
-                  <h1 className="text-3xl font-light tracking-tight text-slate-900 sm:text-4xl">
-                    {buyerName}
-                  </h1>
-                  <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">
-                    {buyerBio}
-                  </p>
-                </div>
+                <div className="pb-1"><span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">Buyer profile</span><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">{buyerName}</h1><p className="mt-1 max-w-xl text-sm text-slate-600">{buyerBio}</p></div>
               </div>
-
-              <div className="grid grid-cols-3 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center">
-                <div>
-                  <p className="text-2xl font-light text-slate-900">{viewedCount}</p>
-                  <p className="text-xs text-slate-500">Viewed</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-light text-slate-900">{favoriteIds.length}</p>
-                  <p className="text-xs text-slate-500">Saved</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-light text-slate-900">{inquiryCount}</p>
-                  <p className="text-xs text-slate-500">Inquiries</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-8 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <Mail size={16} className="text-slate-500" />
-                  Contact Email
-                </div>
-                <p className="text-sm text-slate-600">{buyerEmail}</p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <Phone size={16} className="text-slate-500" />
-                  Mobile Number
-                </div>
-                <p className="text-sm text-slate-600">{buyerPhone}</p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <MapPin size={16} className="text-slate-500" />
-                  Preferred Location
-                </div>
-                <p className="text-sm text-slate-600">{buyerLocation}</p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <CalendarDays size={16} className="text-slate-500" />
-                  Buyer Since
-                </div>
-                <p className="text-sm text-slate-600">{memberSince}</p>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:col-span-2">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <UserRound size={16} className="text-slate-500" />
-                  Profile Details
-                </div>
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Occupation</p>
-                    <p className="mt-2 text-sm text-slate-600">{buyerOccupation}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Profile Picture</p>
-                    <p className="mt-2 text-sm text-slate-600">{buyerProfilePicture}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Terms Status</p>
-                    <p className="mt-2 text-sm text-slate-600">{termsStatus}</p>
-                  </div>
-                </div>
-              </div>
+              <p className="rounded-xl bg-slate-50 px-4 py-2 text-xs text-slate-500">Member since <span className="font-semibold text-slate-700">{memberSince}</span></p>
             </div>
           </div>
-
+        </section>
+        <section className={`${profileStyles.content} mt-6 grid gap-6 lg:grid-cols-[1.25fr_0.75fr]`}>
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+            <h2 className="mb-6 text-xl font-semibold text-slate-900">About you</h2>
+            <div className="grid grid-cols-3 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center">
+              <div><p className="text-2xl font-semibold text-slate-900">{viewedCount}</p><p className="text-xs text-slate-500">Viewed</p></div>
+              <div><p className="text-2xl font-semibold text-slate-900">{favoriteIds.length}</p><p className="text-xs text-slate-500">Saved</p></div>
+              <div><p className="text-2xl font-semibold text-slate-900">{inquiryCount}</p><p className="text-xs text-slate-500">Inquiries</p></div>
+            </div>
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              {[
+                { label: "Email", value: buyerEmail, icon: Mail },
+                { label: "Mobile number", value: buyerPhone, icon: Phone },
+                { label: "Occupation", value: buyerOccupation, icon: UserRound },
+                { label: "Preferred location", value: buyerLocation, icon: MapPin },
+              ].map(({ label, value, icon: Icon }) => <div key={label} className="rounded-2xl border border-slate-200 p-4"><p className="flex items-center gap-2 text-xs font-medium text-slate-500"><Icon size={15} />{label}</p><p className="mt-2 break-words text-sm font-semibold text-slate-900">{value}</p></div>)}
+            </div>
+          </div>
           <aside className="space-y-6">
-            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="mb-5 flex items-center gap-2">
-                <UserRound size={18} className="text-slate-500" />
-                <h2 className="text-lg font-semibold text-slate-900">Search Preferences</h2>
-              </div>
-
-              <div className="space-y-4">
-                {[
-                  { label: "Budget Range", value: buyerBudget },
-                  { label: "Property Type", value: buyerPropertyType },
-                  { label: "Preferred Location", value: buyerLocation },
-                  { label: "Occupation", value: buyerOccupation },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl border border-slate-200 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      {item.label}
-                    </p>
-                    <p className="mt-2 text-sm font-medium text-slate-900">{item.value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-[2rem] border border-slate-200 bg-slate-900 p-6 text-white shadow-sm">
-              <div className="mb-4 flex items-center gap-2 text-white/80">
-                <ShieldCheck size={18} />
-                <h2 className="text-lg font-semibold text-white">Account Status</h2>
-              </div>
-
-              <p className="text-sm leading-6 text-white/70">
-                {buyer?.role === "buyer"
-                  ? "Your account is active, secured, and ready for property discovery. Notifications and broker messages are enabled."
-                  : "Your buyer account details are currently unavailable. Please sign in again to refresh your profile."}
-              </p>
-
-              <div className="mt-6 space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-white/60">Notifications</span>
-                  <span className="font-medium text-white">Enabled</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-white/60">Profile visibility</span>
-                  <span className="font-medium text-white">Private</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-white/60">Saved searches</span>
-                  <span className="font-medium text-white">4 active</span>
-                </div>
-              </div>
-            </div>
+            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-lg font-semibold text-slate-900">Search preferences</h2><div className="mt-4 space-y-3">{[{ label: "Budget", value: buyerBudget }, { label: "Property type", value: buyerPropertyType }, { label: "Location", value: buyerLocation }].map((item) => <div key={item.label} className="flex items-start justify-between gap-4 border-b border-slate-100 py-3 last:border-0"><span className="text-sm text-slate-500">{item.label}</span><span className="text-right text-sm font-medium text-slate-900">{item.value}</span></div>)}</div></div>
+            <Link href="/buyer/properties" className="flex items-center justify-between rounded-[2rem] bg-slate-900 p-6 text-white transition hover:bg-blue-900"><span className="font-semibold">Explore properties</span><ChevronRight size={20} /></Link>
           </aside>
         </section>
-
-        <section className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+        <section className={`${profileStyles.aside} mt-6`}>
           <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
             <div className="mb-5 flex items-center gap-2">
               <Bell size={18} className="text-slate-500" />
@@ -649,33 +526,6 @@ export default function BuyerProfilePage() {
             </div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-9 text-center"><Bell className="mx-auto text-slate-300" size={28} /><p className="mt-3 text-sm font-semibold text-slate-700">No recent activity yet</p><p className="mt-1 text-xs leading-5 text-slate-500">Viewed properties and negotiation updates will appear here.</p></div>}
           </div>
 
-            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-              <div className="mb-5 flex items-center gap-2">
-                <ChevronRight size={18} className="text-slate-500" />
-                <h2 className="text-lg font-semibold text-slate-900">Location Snapshot</h2>
-              </div>
-
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Primary Area</p>
-                <p className="mt-2 text-sm font-medium text-slate-900">{buyerLocation}</p>
-              </div>
-
-            <div className="mt-8 rounded-3xl bg-gradient-to-br from-slate-900 to-slate-700 p-6 text-white">
-              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-white/60">
-                Next step
-              </p>
-              <h3 className="mt-3 text-2xl font-light">
-                Continue exploring properties that match your budget and preferred locations.
-              </h3>
-              <Link
-                href="/buyer/properties"
-                className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
-              >
-                Browse properties
-                <ChevronRight size={16} />
-              </Link>
-            </div>
-          </div>
         </section>
       </main>
     </div>

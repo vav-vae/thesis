@@ -25,6 +25,7 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { doc, getDoc, serverTimestamp, Timestamp, updateDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { isRemoteImageUrl, uploadImageToCloudinary } from "@/lib/cloudinary";
+import profileStyles from "@/components/ProfilePage.module.css";
 
 type BrokerProfile = {
   uid: string;
@@ -239,8 +240,8 @@ export default function BrokerProfilePage() {
         </div>
         {saveSuccess && <div role="status" className="mb-6 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"><CheckCircleIcon />{saveSuccess}</div>}
 
-        <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
-          <div className="h-24 border-b border-slate-700 bg-slate-900 sm:h-28" />
+        <section className={`${profileStyles.hero} overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm`}>
+          <div className={`${profileStyles.banner} h-24 sm:h-28`} />
           <div className="px-6 pb-8 sm:px-8">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
               <div className="flex flex-col gap-5 sm:flex-row sm:items-end">
@@ -257,9 +258,9 @@ export default function BrokerProfilePage() {
                 <div className="pb-1">
                   <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
                     <BadgeCheck size={14} />
-                    Registered broker
+                    Broker profile
                   </div>
-                  <h1 className="mt-3 text-3xl font-light tracking-tight text-slate-900 sm:text-4xl">{broker.name}</h1>
+                  <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">{broker.name}</h1>
                   <p className="mt-1 text-slate-600">{broker.position || "Real estate professional"}</p>
                 </div>
               </div>
@@ -270,7 +271,7 @@ export default function BrokerProfilePage() {
           </div>
         </section>
 
-        <section className="mt-6 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <section className={`${profileStyles.content} mt-6 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]`}>
           <div className="space-y-6">
             <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
               <h2 className="text-xl font-semibold text-slate-900">Contact information</h2>
@@ -308,7 +309,7 @@ export default function BrokerProfilePage() {
             <div className="rounded-[2rem] bg-slate-900 p-6 text-white shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/50">License number</p>
               <p className="mt-3 text-xl font-light">{broker.prcLicense || "Not provided"}</p>
-              <p className="mt-4 text-sm leading-6 text-white/60">Add or update professional credentials from your broker settings.</p>
+              <Link href="/broker/settings" className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-blue-100 hover:text-white">Broker settings <ArrowLeft className="rotate-180" size={15} /></Link>
             </div>
           </aside>
         </section>

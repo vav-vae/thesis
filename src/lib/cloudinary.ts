@@ -1,9 +1,9 @@
-import { readJsonResponse } from "./http-response";
+import { HttpResponseError, readJsonResponse } from "./http-response";
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "dpnsayn8m";
 const CLOUDINARY_UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "libot_uploads";
 const CLOUDINARY_SOURCE_FOLDER = process.env.NEXT_PUBLIC_CLOUDINARY_SOURCE_FOLDER || "libot/panorama-sources";
-const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+export const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
 const CLOUDINARY_AUTO_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
 const PANORAMA_WORKING_MAX_DIMENSION = 1600;
 
@@ -26,8 +26,8 @@ async function uploadToCloudinary(
       method: "POST",
       body: formData,
     });
-  } catch {
-    throw new Error("Cloudinary could not be reached. Check your connection and retry the photo upload.");
+  } catch (error) {
+    throw new Error("Cloudinary could not be reached. Check your connection and retry the photo upload.", { cause: error });
   }
 
   const data: unknown = await readJsonResponse(response, "Cloudinary could not upload this file.");
@@ -37,7 +37,7 @@ async function uploadToCloudinary(
     || !("secure_url" in data)
     || typeof data.secure_url !== "string"
   ) {
-    throw new Error("Cloudinary did not return an image URL.");
+    throw new HttpResponseError("Cloudinary did not return an image URL.", response);
   }
 
   return data.secure_url;

@@ -8,9 +8,9 @@ const tailwindConfig = {
   theme: {
     extend: {
       colors: {
-        primary: "#111111",
-        secondary: "#F5F5F5",
-        accent: "#14b8a6",
+        primary: "#073A40",
+        secondary: "#F2F2F2",
+        accent: "#A69076",
       },
       animation: {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
@@ -23,8 +23,8 @@ const tailwindConfig = {
           "50%": { transform: "translateY(-20px)" },
         },
         glow: {
-          "0%, 100%": { boxShadow: "0 0 20px rgba(37, 99, 235, 0.3)" },
-          "50%": { boxShadow: "0 0 40px rgba(37, 99, 235, 0.6)" },
+          "0%, 100%": { boxShadow: "0 0 20px rgba(7, 58, 64, 0.3)" },
+          "50%": { boxShadow: "0 0 40px rgba(7, 58, 64, 0.6)" },
         },
       },
       transitionDelay: {

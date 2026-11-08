@@ -5,10 +5,11 @@
   "start_url": "/login",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#0f766e",
+  "background_color": "#F2F2F2",
+  "theme_color": "#06323B",
   "orientation": "any",
   "icons": [
+    { "src": "/LiBot_Logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]

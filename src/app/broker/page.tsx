@@ -4,49 +4,37 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { collection, onSnapshot, query, Timestamp, where } from "firebase/firestore";
+import { collection, getDocs, onSnapshot, query, Timestamp, where } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import {
   Home,
   UploadCloud,
-  Settings,
-  LogOut,
-  Menu,
-  Eye,
+  ArrowLeft,
+  ArrowRight,
+  Plus,
   Calendar,
   Users,
-  FileText,
-  UserRound,
-  MessageSquare,
   Images,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
-import DashboardSidebar, { type DashboardNavItem } from "@/components/DashboardSidebar";
+import BrokerAccountMenu from "@/components/BrokerAccountMenu";
+import SafeImage from "@/components/SafeImage";
+import { isRemoteImageUrl } from "@/lib/cloudinary";
+import styles from "./dashboard.module.css";
 import { DashboardStatSkeleton } from "@/components/Skeleton";
 
-type PropertyRecord = { id: string; title?: string; location?: string; price?: string; status?: string; createdAt?: Timestamp | Date };
+type PropertyRecord = { id: string; title?: string; location?: string; price?: string; image?: string; status?: string; createdAt?: Timestamp | Date };
 type TourRecord = { id: string; propertyId?: string; status?: string };
 type NegotiationRecord = { id: string; propertyTitle?: string; buyerName?: string; status?: "active" | "accepted" | "rejected"; updatedAt?: Timestamp; createdAt?: Timestamp };
 type ViewingSchedule = { id: string; propertyTitle?: string; propertyLocation?: string; buyerName?: string; scheduledAt?: Timestamp; durationMinutes?: number; status?: "pending" | "confirmed" | "completed" | "cancelled" | "rejected" };
-
-const brokerNavigation: DashboardNavItem[] = [
-  { href: "/broker", label: "Dashboard", icon: Home, exact: true },
-  { href: "/broker/create-tour", label: "Create Virtual Tour", icon: UploadCloud },
-  { href: "/broker/properties", label: "My Properties", icon: FileText },
-  { href: "/broker/virtual-tours", label: "Manage Tours", icon: Images },
-  { href: "/broker/calendar", label: "Viewing Calendar", icon: Calendar },
-  { href: "/broker/negotiations", label: "Negotiations", icon: MessageSquare },
-  { href: "/broker/profile", label: "Profile", icon: UserRound },
-  { href: "/broker/settings", label: "Settings", icon: Settings },
-];
 
 const millis = (value?: Timestamp | Date) => value instanceof Date ? value.getTime() : value?.toMillis?.() ?? 0;
 
 export default function BrokerPage() {
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
+  const [galleryCovers, setGalleryCovers] = useState<Map<string, string>>(new Map());
   const [tours, setTours] = useState<TourRecord[]>([]);
   const [negotiations, setNegotiations] = useState<NegotiationRecord[]>([]);
   const [schedules, setSchedules] = useState<ViewingSchedule[]>([]);
@@ -73,6 +61,26 @@ export default function BrokerPage() {
     });
     return () => { stopProperties(); stopTours(); stopNegotiations(); stopSchedules(); stopAuth(); };
   }, []);
+
+  useEffect(() => {
+    const ids = properties.filter((property) => !isRemoteImageUrl(property.image)).map((property) => property.id);
+    if (!ids.length) return;
+    let cancelled = false;
+    const chunks = Array.from({ length: Math.ceil(ids.length / 30) }, (_, index) => ids.slice(index * 30, index * 30 + 30));
+    void Promise.all(chunks.map((group) => getDocs(query(collection(db, "roomImages"), where("propertyId", "in", group)))))
+      .then((snapshots) => {
+        if (cancelled) return;
+        const covers = new Map<string, string>();
+        snapshots.forEach((snapshot) => snapshot.docs.forEach((item) => {
+          const room = item.data();
+          const cover = Array.isArray(room.imageUrls) ? room.imageUrls.find(isRemoteImageUrl) : undefined;
+          if (typeof room.propertyId === "string" && cover && !covers.has(room.propertyId)) covers.set(room.propertyId, cover);
+        }));
+        setGalleryCovers(covers);
+      })
+      .catch((error) => console.error("Unable to load broker listing covers:", error));
+    return () => { cancelled = true; };
+  }, [properties]);
 
   const handleSignOut = async () => {
     if (signingOut) return;
@@ -116,154 +124,29 @@ export default function BrokerPage() {
   const recentInquiries = useMemo(() => [...negotiations].sort((a, b) => millis(b.updatedAt ?? b.createdAt) - millis(a.updatedAt ?? a.createdAt)).slice(0, 3), [negotiations]);
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <DashboardSidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        items={brokerNavigation}
-        footer={<button type="button" onClick={handleSignOut} disabled={signingOut} className="flex min-h-12 w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"><LogOut size={19} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>}
-      />
-
-      {/* Main Content */}
-      <main className="lg:ml-64">
-        {/* Header */}
-        <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-          <div className="flex items-center justify-between p-6">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                aria-label="Open navigation"
-                aria-expanded={sidebarOpen}
-                className="rounded-lg p-2 text-slate-700 transition-colors hover:bg-slate-100 hover:text-blue-600 lg:hidden"
-              >
-                <Menu size={24} />
-              </button>
-              <div>
-                <h1 className="text-2xl font-light text-slate-900">
-                  Dashboard
-                </h1>
-              </div>
-            </div>
-
-            <NotificationCenter audience="broker" />
+    <div className="min-h-screen bg-[#fbfaf8]">
+      <main>
+        <header className="sticky top-0 z-30 border-b border-[#e9e8e3] bg-white/95 backdrop-blur-md">
+          <div className="mx-auto flex min-h-20 max-w-[1440px] items-center justify-between gap-4 px-5 sm:px-8">
+            <Link href="/broker" className="text-2xl font-bold tracking-tight text-[#076267]">LiBot <span className="ml-1 text-xs font-semibold uppercase tracking-widest text-[#7b8884]">Broker</span></Link>
+            <div className="flex items-center gap-2"><NotificationCenter audience="broker" /><BrokerAccountMenu onSignOut={handleSignOut} signingOut={signingOut} /></div>
           </div>
         </header>
 
-        {/* Page Content */}
-        <div className="p-6 lg:p-10">
+        <div className="mx-auto max-w-[1440px] px-5 pb-16 pt-9 sm:px-8">
           {dataError && <div role="alert" className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{dataError}</div>}
-          <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-            <h2 className="text-3xl font-medium tracking-tight text-slate-900">Your listings</h2>
-            <div className="flex flex-wrap gap-3">
-              <Link href="/broker/create-tour" className="rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-100">Create virtual tour</Link>
-              <Link href="/broker/create-property" className="rounded-md bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800">Add property</Link>
-            </div>
+          <div className={`${styles.intro} mb-8 flex flex-wrap items-end justify-between gap-5`}>
+            <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#087d7d]">Broker workspace</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#183c3e] sm:text-4xl">Your listings at a glance.</h1><p className="mt-2 text-sm text-[#71817d]">Manage homes, tours, and buyer activity.</p></div>
+            <Link href="/broker/create-property" className="inline-flex h-11 items-center gap-2 rounded-full bg-[#076267] px-5 text-sm font-semibold text-white transition hover:bg-[#034b50]"><Plus size={17} />Add property</Link>
           </div>
-          <div className="summary-strip mb-10">
-            {loading ? [1, 2, 3, 4].map((item) => <DashboardStatSkeleton key={item} />) : stats.map((stat) => (
-              <div key={stat.label}>
-                <p className="summary-label">{stat.label}</p>
-                <p className="summary-value">{stat.value}</p>
-                <p className="summary-detail">{stat.change}</p>
-              </div>
-            ))}
+          <div className={`${styles.stats} mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4`}>
+            {loading ? [1, 2, 3, 4].map((item) => <DashboardStatSkeleton key={item} />) : stats.map((stat) => <div key={stat.label} className="rounded-2xl border border-[#e9e8e3] bg-white p-5 shadow-sm"><p className="text-xs font-medium text-[#75817e]">{stat.label}</p><p className="mt-2 text-3xl font-semibold text-[#183c3e]">{stat.value}</p><p className="mt-1 text-xs text-[#75817e]">{stat.change}</p></div>)}
           </div>
-
-          {/* Recent Properties */}
-          <div className="mb-10">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-light text-slate-900">
-                Recent Properties
-              </h2>
-              <Link
-                href="/broker/properties"
-                className="text-blue-600 hover:text-blue-700 font-medium text-sm"
-              >
-                View All →
-              </Link>
-            </div>
-
-            <div className="space-y-3 md:hidden">
-              {recentProperties.map((property) => <Link key={property.id} href={`/broker/properties/${property.id}/edit`} className="block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{property.title || "Untitled property"}</h3><p className="mt-1 truncate text-sm text-slate-500">{property.location || "Location not specified"}</p></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${property.status === "archived" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{property.status === "archived" ? "Archived" : "Active"}</span></div><div className="mt-4 flex items-end justify-between"><p className="font-semibold text-slate-900">₱{property.price ? Number(property.price).toLocaleString("en-PH") : "Contact"}</p><span className="text-xs font-semibold text-blue-600">Edit listing →</span></div></Link>)}
-              {!loading && recentProperties.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No properties yet.</div>}
-            </div>
-            <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white md:block">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50">
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">
-                        Property
-                      </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">
-                        Location
-                      </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">
-                        Price
-                      </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Tours</th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">
-                        Status
-                      </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {recentProperties.map((property) => (
-                      <tr
-                        key={property.id}
-                        className="hover:bg-slate-50 transition-colors"
-                      >
-                        <td className="px-6 py-4">
-                          <p className="font-medium text-slate-900">
-                            {property.title || "Untitled property"}
-                          </p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="text-slate-600">
-                            {property.location || "Location not specified"}
-                          </p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="font-semibold text-slate-900">
-                            ₱{property.price ? Number(property.price).toLocaleString("en-PH") : "Contact"}
-                          </p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-1 text-slate-600">
-                            <Eye size={16} />
-                            {tours.filter((tour) => tour.propertyId === property.id && (tour.status ?? "published") === "published").length}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span
-                            className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                              property.status !== "archived"
-                                ? "bg-green-100 text-green-700"
-                                : "bg-yellow-100 text-yellow-700"
-                            }`}
-                          >
-                            {property.status === "archived" ? "Archived" : "Active"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <Link
-                            href={`/broker/properties/${property.id}/edit`}
-                            className="text-blue-600 hover:text-blue-700 font-medium text-sm"
-                          >
-                            Edit
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                    {!loading && recentProperties.length === 0 && <tr><td colSpan={6} className="px-6 py-12 text-center"><Home className="mx-auto text-slate-300" size={30} /><p className="mt-3 text-sm font-medium text-slate-600">No properties yet</p><Link href="/broker/create-property" className="mt-3 inline-flex text-sm font-semibold text-blue-600">Create your first listing</Link></td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          <section className={`${styles.railSection} mb-10`}>
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-2xl font-semibold text-[#183c3e]">Recent properties</h2><p className="mt-1 text-sm text-[#75817e]">Your newest listings and their tour status.</p></div><div className="flex items-center gap-2"><Link href="/broker/properties" className="mr-3 text-sm font-semibold text-[#076267]">View all →</Link><button type="button" aria-label="Scroll properties left" onClick={() => document.getElementById("broker-property-rail")?.scrollBy({ left: -640, behavior: "smooth" })} className={styles.railArrow}><ArrowLeft size={17} /></button><button type="button" aria-label="Scroll properties right" onClick={() => document.getElementById("broker-property-rail")?.scrollBy({ left: 640, behavior: "smooth" })} className={styles.railArrow}><ArrowRight size={17} /></button></div></div>
+            {recentProperties.length ? <div id="broker-property-rail" className={styles.rail}>{recentProperties.map((property) => <Link key={property.id} href={`/broker/properties/${property.id}/edit`} className={styles.propertyCard}><div className={styles.propertyImage}>{(isRemoteImageUrl(property.image) || galleryCovers.has(property.id)) ? <SafeImage src={isRemoteImageUrl(property.image) ? property.image : galleryCovers.get(property.id)!} alt={property.title || "Property"} fill sizes="(max-width: 640px) 70vw, 270px" className="object-cover" /> : <div className="flex h-full items-center justify-center bg-[#e8efed] text-[#92aba7]"><Home size={40} /></div>}<span className={styles.statusBadge}>{property.status === "archived" ? "Archived" : "Active"}</span></div><h3 className="mt-2 truncate text-sm font-semibold">{property.title || "Untitled property"}</h3><p className="mt-0.5 truncate text-xs text-[#75817e]">{property.location || "Location not specified"}</p><p className="mt-1 text-xs font-semibold">₱{property.price ? Number(property.price).toLocaleString("en-PH") : "Contact"} · {tours.filter((tour) => tour.propertyId === property.id && (tour.status ?? "published") === "published").length} tours</p></Link>)}</div> : !loading && <div className="rounded-2xl border border-dashed border-stone-200 bg-white p-10 text-center text-sm text-stone-500">No properties yet. <Link href="/broker/create-property" className="font-semibold text-[#076267]">Add your first listing</Link></div>}
+          </section>
+          <div className="mb-10 grid gap-3 sm:grid-cols-2"><Link href="/broker/create-tour" className={styles.quickLink}><UploadCloud size={25} /><span><strong>Create virtual tour</strong><small>Give buyers a closer look</small></span><ArrowRight size={17} /></Link><Link href="/broker/virtual-tours" className={styles.quickLink}><Images size={25} /><span><strong>Manage tours</strong><small>Review room panoramas</small></span><ArrowRight size={17} /></Link></div>
 
           {/* Calendar Section */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

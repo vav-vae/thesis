@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where } from "firebase/firestore";
-import { Bell, CalendarDays, CheckCheck, Flag, Home, ShieldCheck } from "lucide-react";
+import { Bell, CalendarDays, CheckCheck, Flag, Home, ShieldCheck, Trash2 } from "lucide-react";
 import { auth, db } from "@/lib/firebase";
 
 type Audience = "buyer" | "broker";
@@ -80,6 +80,7 @@ export default function NotificationCenter({ audience }: { audience: Audience })
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [preferences, setPreferences] = useState({ listings: true, verification: true });
   const [readIds, setReadIds] = useState<string[]>([]);
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
   const [notificationOpenedAt] = useState(() => Date.now());
 
   useEffect(() => onAuthStateChanged(auth, (user) => {
@@ -87,13 +88,17 @@ export default function NotificationCenter({ audience }: { audience: Audience })
     setUserId(uid);
     if (!uid) {
       setReadIds([]);
+      setRemovedIds([]);
       return;
     }
     try {
       const stored = window.localStorage.getItem(`${audience}-notifications-read:${uid}`);
       setReadIds(stored ? JSON.parse(stored) : []);
+      const removed = window.localStorage.getItem(`${audience}-notifications-removed:${uid}`);
+      setRemovedIds(removed ? JSON.parse(removed) : []);
     } catch {
       setReadIds([]);
+      setRemovedIds([]);
     }
   }), [audience]);
 
@@ -197,7 +202,8 @@ export default function NotificationCenter({ audience }: { audience: Audience })
       .slice(0, 12);
   }, [audience, notificationOpenedAt, preferences, properties, reports, schedules, userId, verificationStatus]);
 
-  const unreadCount = notifications.filter((notification) => !readIds.includes(notification.id)).length;
+  const visibleNotifications = notifications.filter((notification) => !removedIds.includes(notification.id));
+  const unreadCount = visibleNotifications.filter((notification) => !readIds.includes(notification.id)).length;
 
   const saveReadIds = (ids: string[]) => {
     setReadIds(ids);
@@ -210,7 +216,12 @@ export default function NotificationCenter({ audience }: { audience: Audience })
     router.push(notification.href);
   };
 
-  const markAllRead = () => saveReadIds(Array.from(new Set([...readIds, ...notifications.map((notification) => notification.id)])));
+  const markAllRead = () => saveReadIds(Array.from(new Set([...readIds, ...visibleNotifications.map((notification) => notification.id)])));
+  const removeNotification = (id: string) => {
+    const next = Array.from(new Set([...removedIds, id]));
+    setRemovedIds(next);
+    if (userId) window.localStorage.setItem(`${audience}-notifications-removed:${userId}`, JSON.stringify(next));
+  };
 
   return <div className="relative">
     <button aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={open} onClick={() => setOpen((current) => !current)} className="relative flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900">
@@ -224,15 +235,18 @@ export default function NotificationCenter({ audience }: { audience: Audience })
         <button onClick={markAllRead} disabled={unreadCount === 0} className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 disabled:text-slate-300"><CheckCheck size={15} />Mark all read</button>
       </div>
       <div className="max-h-[28rem] overflow-y-auto">
-        {notifications.map((notification) => {
+        {visibleNotifications.map((notification) => {
           const unread = !readIds.includes(notification.id);
           const Icon = notification.kind === "verification" ? ShieldCheck : notification.kind === "report" ? Flag : notification.kind === "schedule" ? CalendarDays : Home;
-          return <button key={notification.id} onClick={() => openNotification(notification)} className={`flex w-full gap-3 border-b border-slate-100 px-5 py-4 text-left transition hover:bg-slate-50 ${unread ? "bg-blue-50/40" : "bg-white"}`}>
-            <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${notification.kind === "verification" ? "bg-amber-100 text-amber-700" : notification.kind === "report" ? "bg-red-100 text-red-700" : notification.kind === "schedule" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}><Icon size={16} /></span>
-            <span className="min-w-0 flex-1"><span className="flex items-start gap-2"><span className={`text-sm text-slate-900 ${unread ? "font-semibold" : "font-medium"}`}>{notification.title}</span>{unread && <span aria-label="Unread" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-600" />}</span><span className="mt-1 block truncate text-xs text-slate-500">{notification.detail}</span><span className="mt-1.5 block text-[11px] font-medium text-slate-400">{formatTime(notification.createdAt)}</span></span>
-          </button>;
+          return <div key={notification.id} className={`flex items-start gap-2 border-b border-slate-100 px-5 py-3 ${unread ? "bg-blue-50/40" : "bg-white"}`}>
+            <button onClick={() => openNotification(notification)} className="flex min-w-0 flex-1 gap-3 py-1 text-left transition hover:opacity-80">
+              <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${notification.kind === "verification" ? "bg-amber-100 text-amber-700" : notification.kind === "report" ? "bg-red-100 text-red-700" : notification.kind === "schedule" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}><Icon size={16} /></span>
+              <span className="min-w-0 flex-1"><span className="flex items-start gap-2"><span className={`text-sm text-slate-900 ${unread ? "font-semibold" : "font-medium"}`}>{notification.title}</span>{unread && <span aria-label="Unread" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-600" />}</span><span className="mt-1 block truncate text-xs text-slate-500">{notification.detail}</span><span className="mt-1.5 block text-[11px] font-medium text-slate-400">{formatTime(notification.createdAt)}</span></span>
+            </button>
+            <button type="button" aria-label={`Remove ${notification.title} notification`} title="Remove notification" onClick={() => removeNotification(notification.id)} className="mt-1 rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"><Trash2 size={16} /></button>
+          </div>;
         })}
-        {notifications.length === 0 && <div className="px-6 py-10 text-center"><Bell className="mx-auto text-slate-300" size={30} /><p className="mt-3 text-sm font-medium text-slate-600">You&apos;re all caught up</p><p className="mt-1 text-xs text-slate-400">New activity will appear here.</p></div>}
+        {visibleNotifications.length === 0 && <div className="px-6 py-10 text-center"><Bell className="mx-auto text-slate-300" size={30} /><p className="mt-3 text-sm font-medium text-slate-600">You&apos;re all caught up</p><p className="mt-1 text-xs text-slate-400">New activity will appear here.</p></div>}
       </div>
     </div>}
   </div>;
