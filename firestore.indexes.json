@@ -1,0 +1,11 @@
+{
+  "indexes": [
+    { "collectionGroup": "properties", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "brokerId", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }] },
+    { "collectionGroup": "viewingSchedules", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "buyerId", "order": "ASCENDING" }, { "fieldPath": "propertyId", "order": "ASCENDING" }] },
+    { "collectionGroup": "negotiations", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "buyerId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }] },
+    { "collectionGroup": "negotiations", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "brokerId", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "DESCENDING" }] },
+    { "collectionGroup": "pushSubscriptions", "queryScope": "COLLECTION_GROUP", "fields": [{ "fieldPath": "enabled", "order": "ASCENDING" }, { "fieldPath": "endpoint", "order": "ASCENDING" }] },
+    { "collectionGroup": "notificationQueue", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }] }
+  ],
+  "fieldOverrides": []
+}

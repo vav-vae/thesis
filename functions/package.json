@@ -1,0 +1,9 @@
+{
+  "name": "libot-notification-functions",
+  "private": true,
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "scripts": { "lint": "node --check index.js", "test": "node --test producer-core.test.js emulator.test.js rules.test.js", "deploy": "firebase deploy --only functions" },
+  "dependencies": { "firebase-admin": "^13.0.0", "firebase-functions": "^6.0.0" },
+  "devDependencies": { "@firebase/rules-unit-testing": "^5.0.0", "firebase": "^12.0.0" }
+}

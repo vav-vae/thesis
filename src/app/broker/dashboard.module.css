@@ -1,0 +1,20 @@
+.intro { animation: rise 450ms ease-out both; }
+.stats { animation: rise 500ms 70ms ease-out both; }
+.railSection { animation: rise 500ms 130ms ease-out both; }
+.rail { display: flex; gap: 15px; overflow-x: auto; padding-bottom: 12px; scroll-snap-type: x mandatory; scrollbar-width: thin; scrollbar-color: #c9d7d3 transparent; }
+.propertyCard { flex: 0 0 clamp(190px, 22vw, 270px); min-width: 0; scroll-snap-align: start; color: #183c3e; }
+.propertyImage { position: relative; height: clamp(180px, 19vw, 235px); overflow: hidden; border-radius: 17px; background: #e8efed; }
+.propertyImage img { transition: transform 250ms ease; }
+.propertyCard:hover .propertyImage img { transform: scale(1.035); }
+.statusBadge { position: absolute; top: 10px; left: 10px; border-radius: 99px; background: white; padding: 6px 10px; color: #076267; font-size: 10px; font-weight: 700; }
+.railArrow { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #e4e7e2; border-radius: 50%; background: white; }
+.railArrow:hover { background: #e7f2ef; }
+.quickLink { display: flex; min-height: 90px; align-items: center; gap: 15px; border: 1px solid #eeede8; border-radius: 20px; background: white; padding: 18px; color: #183c3e; box-shadow: 0 5px 18px #173b3b0b; transition: transform 150ms ease, box-shadow 150ms ease; }
+.quickLink:hover { transform: translateY(-2px); box-shadow: 0 8px 22px #173b3b1a; }
+.quickLink > :first-child { color: #087d7d; }
+.quickLink span { display: grid; flex: 1; gap: 3px; }
+.quickLink strong { font-size: 13px; }
+.quickLink small { color: #77837f; font-size: 11px; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 640px) { .propertyCard { flex-basis: 66vw; } .propertyImage { height: 61vw; max-height: 280px; } }
+@media (prefers-reduced-motion: reduce) { .intro, .stats, .railSection, .propertyImage img, .quickLink { animation: none; transition: none; } }

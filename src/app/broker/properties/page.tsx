@@ -157,7 +157,7 @@ export default function BrokerPropertiesPage() {
 
       {/* Header */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-        <div className="flex items-center justify-between p-6">
+        <div className="flex items-center justify-between gap-3 px-4 py-4 sm:p-6">
           <div className="flex items-center gap-4">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -170,8 +170,8 @@ export default function BrokerPropertiesPage() {
               )}
             </button>
             <div>
-              <h1 className="text-2xl font-light text-slate-900">My Properties</h1>
-              <p className="text-sm text-slate-500">Manage your real estate listings</p>
+              <h1 className="text-xl font-light text-slate-900 sm:text-2xl">My Properties</h1>
+              <p className="hidden text-sm text-slate-500 sm:block">Manage your real estate listings</p>
             </div>
           </div>
 
@@ -180,7 +180,7 @@ export default function BrokerPropertiesPage() {
       </header>
 
       {/* Main Content */}
-      <main className="p-6 lg:p-10">
+      <main className="p-4 sm:p-6 lg:p-10">
         {/* Add New Property Button */}
         <div className="mb-8">
           <Link

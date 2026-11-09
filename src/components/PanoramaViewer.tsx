@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-export default function PanoramaViewer({ panorama, caption }: { panorama: string; caption?: string }) {
+export default function PanoramaViewer({ panorama, caption, fullScreen = false }: { panorama: string; caption?: string; fullScreen?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -25,5 +25,5 @@ export default function PanoramaViewer({ panorama, caption }: { panorama: string
     };
   }, [panorama]);
 
-  return <figure><div ref={containerRef} aria-label={caption || "Interactive 360-degree panorama"} className="h-[28rem] w-full cursor-grab overflow-hidden rounded-2xl bg-slate-950 active:cursor-grabbing" />{caption && <figcaption className="mt-2 text-center text-xs text-slate-500">{caption} · Drag to look around · Scroll to zoom</figcaption>}</figure>;
+  return <figure className={fullScreen ? "h-full" : undefined}><div ref={containerRef} aria-label={caption || "Interactive panorama"} className={`relative w-full cursor-grab overflow-hidden bg-slate-950 active:cursor-grabbing ${fullScreen ? "h-full rounded-xl" : "h-[28rem] rounded-2xl"}`} />{caption && !fullScreen && <figcaption className="mt-2 text-center text-xs text-slate-500">{caption} · Drag to look around</figcaption>}</figure>;
 }

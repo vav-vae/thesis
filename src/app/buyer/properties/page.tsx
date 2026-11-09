@@ -20,22 +20,19 @@ import {
   Search,
   MapPin,
   Heart,
-  Menu,
   X,
   Home,
-  Settings,
-  LogOut,
   ChevronRight,
   Zap,
   Filter,
   ArrowUpDown,
-  UserRound,
-  MessageSquare,
   Scale,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
+import BuyerAccountMenu from "@/components/BuyerAccountMenu";
 import SafeImage from "@/components/SafeImage";
 import AppLogo from "@/components/AppLogo";
+import searchStyles from "./search.module.css";
 
 interface Property {
   id: string;
@@ -57,23 +54,36 @@ interface Property {
 
 export default function BuyerPropertiesPage() {
   const router = useRouter();
+  const initialParam = (key: string) => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get(key) ?? "";
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState(() => initialParam("q"));
   const { favorites, toggleFavorite, isUpdating, error: favoriteError } = useBuyerFavorites();
   const [sortBy, setSortBy] = useState<"newest" | "price-low" | "price-high">("newest");
-  const [showFilters, setShowFilters] = useState(false);
-  const [locationFilter, setLocationFilter] = useState("");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
-  const [minBeds, setMinBeds] = useState("");
+  const [showFilters, setShowFilters] = useState(() => Boolean(initialParam("location") || initialParam("type") || initialParam("minPrice") || initialParam("maxPrice")));
+  const [locationFilter, setLocationFilter] = useState(() => initialParam("location"));
+  const [typeFilter, setTypeFilter] = useState(() => initialParam("type"));
+  const [minPrice, setMinPrice] = useState(() => initialParam("minPrice"));
+  const [maxPrice, setMaxPrice] = useState(() => initialParam("maxPrice"));
+  const [minBeds, setMinBeds] = useState(() => initialParam("beds"));
   const [signingOut, setSigningOut] = useState(false);
   const [tourPropertyIds, setTourPropertyIds] = useState<Set<string>>(new Set());
-  const [virtualToursOnly, setVirtualToursOnly] = useState(false);
+  const [virtualToursOnly, setVirtualToursOnly] = useState(() => initialParam("tour") === "1");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareError, setCompareError] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries({ q: searchTerm, location: locationFilter, type: typeFilter, minPrice, maxPrice, beds: minBeds })) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    if (virtualToursOnly) params.set("tour", "1");
+    else params.delete("tour");
+    const next = `${window.location.pathname}${params.size ? `?${params}` : ""}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", next);
+  }, [searchTerm, locationFilter, typeFilter, minPrice, maxPrice, minBeds, virtualToursOnly]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -121,7 +131,7 @@ export default function BuyerPropertiesPage() {
         })));
         setTourPropertyIds(new Set(tourSnapshot.docs.filter((item) => item.data().panoramaUrl).map((item) => String(item.data().propertyId))));
         const discovery = profileSnapshot?.data()?.settings?.discovery;
-        if (discovery) {
+        if (discovery && !window.location.search) {
           setLocationFilter(String(discovery.location ?? ""));
           setMinPrice(String(discovery.minPrice ?? ""));
           setMaxPrice(String(discovery.maxPrice ?? ""));
@@ -138,7 +148,7 @@ export default function BuyerPropertiesPage() {
   }, []);
 
   const propertyPrice = (property: Property) => Number(String(property.price ?? "").replace(/[^0-9.]/g, "")) || 0;
-  const activeFilterCount = [locationFilter, minPrice, maxPrice, minBeds].filter(Boolean).length + (virtualToursOnly ? 1 : 0);
+  const activeFilterCount = [locationFilter, typeFilter, minPrice, maxPrice, minBeds].filter(Boolean).length + (virtualToursOnly ? 1 : 0);
   const filteredProperties = properties
     .filter((property) => {
       const search = searchTerm.trim().toLowerCase();
@@ -146,6 +156,7 @@ export default function BuyerPropertiesPage() {
       const priceValue = propertyPrice(property);
       return (!search || property.title?.toLowerCase().includes(search) || location.includes(search))
         && (!locationFilter.trim() || location.includes(locationFilter.trim().toLowerCase()))
+        && (!typeFilter || property.propertyType?.toLowerCase() === typeFilter.toLowerCase())
         && (!minPrice || priceValue >= Number(minPrice))
         && (!maxPrice || priceValue <= Number(maxPrice))
         && (!minBeds || Number(property.beds ?? 0) >= Number(minBeds))
@@ -187,104 +198,16 @@ export default function BuyerPropertiesPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-200 transition-transform duration-300 lg:translate-x-0 ${
-        sidebarOpen ? "translate-x-0" : "-translate-x-full"
-      }`}>
-        <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="p-8 border-b border-slate-200">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 relative flex-shrink-0">
-                <AppLogo className="h-10 w-10 object-contain" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-900">LiBot</p>
-                <p className="text-xs text-slate-500">Real Estate</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Navigation */}
-          <nav className="flex-1 p-6 space-y-2">
-            <Link
-              href="/buyer"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <Home size={20} />
-              <span>Dashboard</span>
-            </Link>
-
-            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-100 text-slate-900 font-medium">
-              <Search size={20} />
-              <span>Browse Properties</span>
-            </div>
-
-            <Link
-              href="/buyer/favorites"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <Heart size={20} />
-              <span>Favorites</span>
-            </Link>
-
-            <Link
-              href="/buyer/profile"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <UserRound size={20} />
-              <span>Profile</span>
-            </Link>
-
-            <Link href="/buyer/negotiations" className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium">
-              <MessageSquare size={20} />
-              <span>Negotiations</span>
-            </Link>
-          </nav>
-
-          {/* Settings & Logout */}
-          <div className="p-6 space-y-2 border-t border-slate-200">
-            <Link
-              href="/buyer/settings"
-              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all font-medium"
-            >
-              <Settings size={20} />
-              <span>Settings</span>
-            </Link>
-
-            <button onClick={handleSignOut} disabled={signingOut} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition-all font-medium disabled:opacity-60">
-              <LogOut size={20} />
-              <span>{signingOut ? "Signing Out..." : "Sign Out"}</span>
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="lg:ml-64">
-        {/* Top Navigation */}
-        <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-          <div className="flex items-center justify-between p-6">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="rounded-lg p-2 text-slate-700 transition-colors hover:bg-slate-100 hover:text-blue-600 lg:hidden"
-              >
-                {sidebarOpen ? (
-                  <X size={24} />
-                ) : (
-                  <Menu size={24} />
-                )}
-              </button>
-              <h1 className="text-2xl font-light text-slate-900">Browse Properties</h1>
-            </div>
-
-            <NotificationCenter audience="buyer" />
+      <main>
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+            <div className="flex min-w-0 items-center gap-3"><Link href="/buyer" aria-label="LiBot dashboard" className="shrink-0"><AppLogo className="h-9 w-9" /></Link><h1 className="truncate text-lg font-semibold text-slate-900 sm:text-xl">Browse Properties</h1></div>
+            <div className="flex items-center gap-2"><NotificationCenter audience="buyer" /><BuyerAccountMenu onSignOut={handleSignOut} signingOut={signingOut} /></div>
           </div>
         </header>
 
         {/* Page Content */}
-        <div className="p-6 lg:p-10">
+        <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-10">
           {favoriteError && <div role="alert" className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{favoriteError}</div>}
           {compareError && <div role="alert" className="mb-6 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><span>{compareError}</span><button onClick={() => setCompareError("")} aria-label="Dismiss"><X size={17} /></button></div>}
           {/* Search Bar */}
@@ -300,6 +223,8 @@ export default function BuyerPropertiesPage() {
               />
             </div>
           </div>
+
+          <label className="mb-5 inline-flex cursor-pointer items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm"><input type="checkbox" checked={virtualToursOnly} onChange={(event) => setVirtualToursOnly(event.target.checked)} className="h-4 w-4 accent-blue-600" />Has virtual tour</label>
 
           {/* Filters and Sort Bar */}
           <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -332,7 +257,15 @@ export default function BuyerPropertiesPage() {
             </div>
           </div>
 
-          {showFilters && <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between gap-4"><div><h2 className="font-semibold text-slate-900">Filter properties</h2><p className="mt-1 text-xs text-slate-500">Narrow listings by location, price, bedrooms, and tour availability.</p></div>{activeFilterCount > 0 && <button onClick={() => { setLocationFilter(""); setMinPrice(""); setMaxPrice(""); setMinBeds(""); setVirtualToursOnly(false); }} className="text-xs font-semibold text-blue-600">Clear all</button>}</div><div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><label className="text-xs font-semibold text-slate-600">Location<input value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)} placeholder="e.g., Manila" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-400" /></label><label className="text-xs font-semibold text-slate-600">Minimum price (₱)<input type="number" min="0" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="0" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-400" /></label><label className="text-xs font-semibold text-slate-600">Maximum price (₱)<input type="number" min="0" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="No maximum" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-400" /></label><label className="text-xs font-semibold text-slate-600">Minimum bedrooms<select value={minBeds} onChange={(event) => setMinBeds(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-400"><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></label></div><label className="mt-5 flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700"><input type="checkbox" checked={virtualToursOnly} onChange={(event) => setVirtualToursOnly(event.target.checked)} className="h-4 w-4 accent-blue-600" /><Zap size={17} className="text-blue-600" />Only show properties with virtual tours</label></section>}
+          {activeFilterCount > 0 && <div className="mb-5 flex flex-wrap items-center gap-2" aria-label="Active filters">{[
+            locationFilter && `Location: ${locationFilter}`,
+            typeFilter && `Type: ${typeFilter}`,
+            minPrice && `From ₱${Number(minPrice).toLocaleString("en-PH")}`,
+            maxPrice && `Up to ₱${Number(maxPrice).toLocaleString("en-PH")}`,
+            minBeds && `${minBeds}+ beds`,
+            virtualToursOnly && "Has virtual tour",
+          ].filter(Boolean).map((label) => <span key={label as string} className="rounded-full bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-800">{label}</span>)}<button onClick={() => { setLocationFilter(""); setTypeFilter(""); setMinPrice(""); setMaxPrice(""); setMinBeds(""); setVirtualToursOnly(false); }} className="px-2 text-xs font-semibold text-slate-500 hover:text-slate-900">Clear all</button></div>}
+          {showFilters && <><div className="fixed inset-0 z-40 bg-slate-950/50 md:hidden" onClick={() => setShowFilters(false)} aria-hidden="true" /><section aria-label="Filter properties" className={`${searchStyles.sheet} fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] overflow-y-auto rounded-t-3xl border border-slate-200 bg-white p-5 shadow-xl md:static md:z-auto md:mb-8 md:max-h-none md:rounded-2xl md:shadow-sm`}><div className="flex items-center justify-between gap-4"><h2 className="text-lg font-semibold text-slate-900">Filter properties</h2><button onClick={() => setShowFilters(false)} aria-label="Close filters" className="rounded-lg p-2 text-slate-500 md:hidden"><X size={20} /></button></div><div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><label className="text-xs font-semibold text-slate-600">Location<input value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)} placeholder="City or province" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900" /></label><label className="text-xs font-semibold text-slate-600">Property type<select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900"><option value="">Any type</option><option value="Condominium">Condominium</option><option value="House and Lot">House and Lot</option><option value="Lot">Lot</option></select></label><label className="text-xs font-semibold text-slate-600">Minimum price<input type="number" min="0" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="Any" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900" /></label><label className="text-xs font-semibold text-slate-600">Maximum price<input type="number" min="0" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="Any" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900" /></label><label className="text-xs font-semibold text-slate-600">Minimum bedrooms<select value={minBeds} onChange={(event) => setMinBeds(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900"><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></label></div><label className="mt-5 flex cursor-pointer items-center gap-3 text-sm font-semibold text-slate-700"><input type="checkbox" checked={virtualToursOnly} onChange={(event) => setVirtualToursOnly(event.target.checked)} className="h-4 w-4 accent-teal-700" />Has virtual tour</label><button onClick={() => setShowFilters(false)} className="mt-6 min-h-12 w-full rounded-xl bg-[#07585b] px-5 text-sm font-semibold text-white md:hidden">Show {filteredProperties.length} {filteredProperties.length === 1 ? "property" : "properties"}</button></section></>}
 
           {/* Loading State */}
           {loading ? (
@@ -366,7 +299,7 @@ export default function BuyerPropertiesPage() {
                       href={`/buyer/properties/${property.id}`}
                       className="group"
                     >
-                      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden hover:shadow-xl hover:border-slate-300 transition-all duration-300 h-full flex flex-col">
+                      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden hover:shadow-lg hover:border-slate-300 transition-shadow duration-150 h-full flex flex-col">
                         {/* Image Container */}
                         <div className="relative h-48 bg-gradient-to-br from-slate-200 to-slate-300 overflow-hidden">
                           {property.image ? (
@@ -375,7 +308,7 @@ export default function BuyerPropertiesPage() {
                               alt={property.title || "Property cover"}
                               fill
                               sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
-                              className="object-cover transition-transform duration-300 group-hover:scale-110"
+                              className="object-cover transition-transform duration-150 group-hover:scale-[1.03] motion-reduce:transform-none"
                             />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center bg-slate-100">
@@ -406,7 +339,7 @@ export default function BuyerPropertiesPage() {
                           <button aria-label={compareIds.includes(property.id) ? "Remove from comparison" : "Add to comparison"} onClick={(event) => { event.preventDefault(); toggleCompare(property.id); }} className={`absolute right-3 top-14 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition ${compareIds.includes(property.id) ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:text-blue-600"}`}><Scale size={17} /></button>
 
                           {/* Badge */}
-                          {tourPropertyIds.has(property.id) && <div className="absolute top-3 left-3 bg-blue-600 text-white text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1 shadow-md"><Zap size={14} />Virtual Tour</div>}
+                          {tourPropertyIds.has(property.id) && <div className="absolute top-3 left-3 flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md"><Zap size={14} />360° Tour Available</div>}
                           <div className={`absolute bottom-3 left-3 rounded-full px-3 py-1 text-xs font-semibold capitalize shadow-sm ${property.availabilityStatus === "sold" ? "bg-slate-900 text-white" : property.availabilityStatus === "reserved" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{property.availabilityStatus ?? "available"}</div>
                         </div>
 
@@ -425,21 +358,21 @@ export default function BuyerPropertiesPage() {
                           </div>
 
                           {/* Details Grid */}
-                          {(property.beds || property.baths || property.sqft) && (
+                          {(
                             <div className="grid grid-cols-3 gap-3 mb-6 py-4 border-y border-slate-200">
-                              {property.beds && (
+                              {property.beds != null && (
                                 <div className="text-center">
                                   <p className="text-2xl font-light text-slate-900">{property.beds}</p>
                                   <p className="text-xs text-slate-600">Beds</p>
                                 </div>
                               )}
-                              {property.baths && (
+                              {property.baths != null && (
                                 <div className="text-center">
                                   <p className="text-2xl font-light text-slate-900">{property.baths}</p>
                                   <p className="text-xs text-slate-600">Baths</p>
                                 </div>
                               )}
-                              {property.sqft && (
+                              {property.sqft != null && (
                                 <div className="text-center">
                                   <p className="text-2xl font-light text-slate-900">{property.sqft}</p>
                                   <p className="text-xs text-slate-600">Sqft</p>
@@ -456,8 +389,9 @@ export default function BuyerPropertiesPage() {
                                 ₱{property.price || "Contact"}
                               </p>
                             </div>
-                            <div className="p-3 bg-blue-600 text-white rounded-lg group-hover:bg-blue-700 transition-colors">
-                              <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                            <div className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2.5 text-xs font-semibold text-white group-hover:bg-blue-700">
+                              <span>{tourPropertyIds.has(property.id) ? "Start 360° tour" : "View details"}</span>
+                              <ChevronRight size={16} className="group-hover:translate-x-1" />
                             </div>
                           </div>
                         </div>
@@ -476,6 +410,7 @@ export default function BuyerPropertiesPage() {
                       ? `No properties match "${searchTerm}". Try adjusting your search terms.`
                       : "No properties available at the moment."}
                   </p>
+                  {(searchTerm || activeFilterCount > 0) && <button onClick={() => { setSearchTerm(""); setLocationFilter(""); setTypeFilter(""); setMinPrice(""); setMaxPrice(""); setMinBeds(""); setVirtualToursOnly(false); }} className="mt-5 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Clear search and filters</button>}
                 </div>
               )}
             </>

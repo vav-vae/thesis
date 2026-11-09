@@ -9,6 +9,8 @@ from typing import Literal, Sequence
 import cv2
 import numpy as np
 
+from .spherical import SphericalMatches, prepare_spherical_matches
+
 Algorithm = Literal["orb", "sift"]
 
 
@@ -35,28 +37,35 @@ def _issue(severity: str, code: str, message: str) -> dict:
 def analyze_image_sequence(
     images: Sequence[np.ndarray],
     filenames: Sequence[str] | None = None,
-    algorithm: Algorithm = "orb",
+    algorithm: Algorithm = "sift",
+    ransac_threshold: float = 4.0,
+    *,
+    prepared: SphericalMatches | None = None,
 ) -> dict:
-    """Assess source-image quality and overlap before attempting reconstruction."""
+    """Assess quality and connected overlap using the reconstruction matcher."""
     if not 2 <= len(images) <= 30:
         raise StitchingError("Upload between 2 and 30 overlapping images.")
 
     algorithm = algorithm.lower()  # type: ignore[assignment]
     if algorithm not in ("orb", "sift"):
         raise StitchingError("Algorithm must be either 'orb' or 'sift'.")
+    if not 1.0 <= ransac_threshold <= 10.0:
+        raise StitchingError("RANSAC threshold must be between 1.0 and 10.0 pixels.")
 
-    detector, norm, ratio_threshold = _detector_and_norm(algorithm)
+    if prepared is None:
+        detector, norm, ratio_threshold = _detector_and_norm(algorithm)
+        prepared = prepare_spherical_matches(
+            images, detector, norm, ratio_threshold, ransac_threshold
+        )
     names = list(filenames or [f"Image {index}" for index in range(1, len(images) + 1)])
     image_results: list[dict] = []
-    descriptors: list[np.ndarray | None] = []
-    keypoints: list[list[cv2.KeyPoint]] = []
 
     for index, image in enumerate(images):
         height, width = image.shape[:2]
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         brightness = float(gray.mean())
-        detected_keypoints, detected_descriptors = detector.detectAndCompute(gray, None)
+        detected_keypoints = prepared.features[index].keypoints
         issues: list[dict] = []
 
         if width <= height:
@@ -82,8 +91,6 @@ def analyze_image_sequence(
         elif len(detected_keypoints) < 120:
             issues.append(_issue("warning", "features_weak", "Few visual features were detected; include more textured detail."))
 
-        keypoints.append(detected_keypoints)
-        descriptors.append(detected_descriptors)
         image_results.append({
             "index": index,
             "filename": names[index] if index < len(names) else f"Image {index + 1}",
@@ -96,43 +103,34 @@ def analyze_image_sequence(
         })
 
     pair_results: list[dict] = []
-    matcher = cv2.BFMatcher(norm)
-    for index in range(len(images) - 1):
+    # Only report actual links. Two uploads need not overlap directly when
+    # other images provide a reliable path between them.
+    for report in prepared.reports:
         issues: list[dict] = []
-        good_matches: list[cv2.DMatch] = []
-        inliers = 0
-        inlier_ratio = 0.0
-        first_descriptors, second_descriptors = descriptors[index], descriptors[index + 1]
-
-        if first_descriptors is None or second_descriptors is None:
-            issues.append(_issue("error", "overlap_unavailable", "Overlap could not be measured because features are missing."))
-        else:
-            candidates = matcher.knnMatch(second_descriptors, first_descriptors, k=2)
-            good_matches = [first for first, second in candidates if first.distance < ratio_threshold * second.distance]
-            if len(good_matches) >= 4:
-                source = np.float32([keypoints[index + 1][match.queryIdx].pt for match in good_matches]).reshape(-1, 1, 2)
-                destination = np.float32([keypoints[index][match.trainIdx].pt for match in good_matches]).reshape(-1, 1, 2)
-                _, inlier_mask = cv2.findHomography(source, destination, cv2.RANSAC, 4.0)
-                if inlier_mask is not None:
-                    inliers = int(inlier_mask.ravel().sum())
-                    inlier_ratio = inliers / len(good_matches)
-
-            if len(good_matches) < 10 or inliers < 6 or inlier_ratio < 0.18:
-                issues.append(_issue("error", "overlap_insufficient", "Insufficient overlap; retake these images with 30–50% shared content."))
-            elif len(good_matches) < 25 or inliers < 10 or inlier_ratio < 0.3:
-                issues.append(_issue("warning", "overlap_weak", "Overlap is weak and may create visible seams."))
-
+        if report["good_matches"] < 25 or report["inlier_ratio"] < 0.3:
+            issues.append(_issue("warning", "overlap_weak", "Overlap is weak and may create visible seams."))
         pair_results.append({
-            "from_index": index,
-            "to_index": index + 1,
-            "good_matches": len(good_matches),
-            "inliers": inliers,
-            "inlier_ratio": round(inlier_ratio, 4),
+            **{key: report[key] for key in (
+                "from_index", "to_index", "good_matches", "inliers", "inlier_ratio"
+            )},
             "issues": issues,
         })
 
+    graph_issues: list[dict] = []
+    connected = len(prepared.components) == 1
+    if not connected:
+        groups = " / ".join(
+            "[" + ", ".join(str(index + 1) for index in group) + "]"
+            for group in prepared.components
+        )
+        graph_issues.append(_issue(
+            "error", "overlap_disconnected",
+            f"These image groups do not have reliable overlap: {groups}. "
+            "Add or retake photos bridging the groups with 30–50% shared content.",
+        ))
     all_issues = [issue for item in image_results for issue in item["issues"]]
     all_issues.extend(issue for pair in pair_results for issue in pair["issues"])
+    all_issues.extend(graph_issues)
     errors = sum(issue["severity"] == "error" for issue in all_issues)
     warnings = sum(issue["severity"] == "warning" for issue in all_issues)
     return {
@@ -141,6 +139,8 @@ def analyze_image_sequence(
         "summary": {"errors": errors, "warnings": warnings},
         "images": image_results,
         "pairs": pair_results,
+        "issues": graph_issues,
+        "overlap_graph": {"connected": connected, "components": prepared.components},
     }
 
 
@@ -152,6 +152,12 @@ def _detector_and_norm(algorithm: Algorithm):
             raise StitchingError("SIFT is unavailable in this OpenCV installation.")
         return cv2.SIFT_create(nfeatures=7000), cv2.NORM_L2, 0.75
     raise StitchingError("Algorithm must be either 'orb' or 'sift'.")
+
+
+def _ratio_matches(candidates, threshold: float) -> list:
+    """Sparse descriptors may yield fewer than two neighbours."""
+    return [pair[0] for pair in candidates
+            if len(pair) == 2 and pair[0].distance < threshold * pair[1].distance]
 
 
 def _crop_to_content(image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -185,7 +191,7 @@ def _stitch_pair(
     detector, norm, ratio_threshold = _detector_and_norm(algorithm)
     gray_base = cv2.cvtColor(base, cv2.COLOR_BGR2GRAY)
     gray_next = cv2.cvtColor(next_image, cv2.COLOR_BGR2GRAY)
-    keypoints_base, descriptors_base = detector.detectAndCompute(gray_base, None)
+    keypoints_base, descriptors_base = detector.detectAndCompute(gray_base, evidence_mask)
     keypoints_next, descriptors_next = detector.detectAndCompute(gray_next, None)
 
     if descriptors_base is None or descriptors_next is None:
@@ -193,7 +199,7 @@ def _stitch_pair(
 
     matcher = cv2.BFMatcher(norm)
     candidate_matches = matcher.knnMatch(descriptors_next, descriptors_base, k=2)
-    good_matches = [first for first, second in candidate_matches if first.distance < ratio_threshold * second.distance]
+    good_matches = _ratio_matches(candidate_matches, ratio_threshold)
     if len(good_matches) < 10:
         raise StitchingError(
             f"Image pair {pair_index} has only {len(good_matches)} reliable matches; at least 10 are required. "
@@ -217,7 +223,15 @@ def _stitch_pair(
     next_height, next_width = next_image.shape[:2]
     base_corners = np.float32([[0, 0], [base_width, 0], [base_width, base_height], [0, base_height]]).reshape(-1, 1, 2)
     next_corners = np.float32([[0, 0], [next_width, 0], [next_width, next_height], [0, next_height]]).reshape(-1, 1, 2)
+    # A projective horizon crossing the image produces an unbounded warp even
+    # when the four transformed corners happen to have finite coordinates.
+    denominators = np.c_[next_corners.reshape(-1, 2), np.ones(4)] @ homography[2]
+    if (not np.isfinite(homography).all() or
+            not (np.all(denominators > 1e-8) or np.all(denominators < -1e-8))):
+        raise StitchingError(f"Image pair {pair_index} produced an invalid projective warp.")
     transformed_next = cv2.perspectiveTransform(next_corners, homography)
+    if not np.isfinite(transformed_next).all() or np.max(np.abs(transformed_next)) > 120_000_000:
+        raise StitchingError(f"Image pair {pair_index} produced invalid panorama bounds.")
     all_corners = np.concatenate((base_corners, transformed_next), axis=0).reshape(-1, 2)
     minimum = np.floor(all_corners.min(axis=0)).astype(int)
     maximum = np.ceil(all_corners.max(axis=0)).astype(int)
@@ -233,6 +247,7 @@ def _stitch_pair(
         np.full((next_height, next_width), 255, dtype=np.uint8),
         translation @ homography,
         (canvas_width, canvas_height),
+        flags=cv2.INTER_NEAREST,
     )
     base_canvas = np.zeros_like(warped)
     base_mask = np.zeros((canvas_height, canvas_width), dtype=np.uint8)
@@ -259,7 +274,7 @@ def _stitch_pair(
 
 def stitch_images(
     images: Sequence[np.ndarray],
-    algorithm: Algorithm = "orb",
+    algorithm: Algorithm = "sift",
     ransac_threshold: float = 4.0,
 ) -> tuple[np.ndarray, dict]:
     """Stitch ordered overlapping images and return the panorama plus evaluation metrics."""
@@ -349,15 +364,16 @@ def placeholder_ai_gap_fill(
     evidence. Its output remains fully identified by the returned mask and metadata.
     """
     missing_mask = cv2.bitwise_not(evidence_mask)
-    regions = describe_missing_regions(evidence_mask)
+    regions = describe_missing_regions(evidence_mask, minimum_area=1)
+    _, labels = cv2.connectedComponents(missing_mask, connectivity=8)
     fill_regions = [region for region in regions if region["canvas_ratio"] <= maximum_region_ratio]
     unresolved_regions = [region for region in regions if region["canvas_ratio"] > maximum_region_ratio]
     fill_mask = np.zeros_like(evidence_mask)
     for region in fill_regions:
-        bounds = region["pixel_bounds"]
-        x, y, width, height = bounds["x"], bounds["y"], bounds["width"], bounds["height"]
-        component = missing_mask[y:y + height, x:x + width]
-        fill_mask[y:y + height, x:x + width] = component
+        # Bounds can contain another disconnected (possibly large) gap. Select
+        # the exact component, never all missing pixels in its bounding box.
+        component_id = int(region["id"].split("-")[1])
+        fill_mask[labels == component_id] = 255
         region["source"] = "ai_placeholder"
     if not np.any(missing_mask):
         return image.copy(), fill_mask, {"used": False, "method": "none", "regions": [], "unresolved_regions": [], "filled_ratio": 0.0}
@@ -376,28 +392,36 @@ def placeholder_ai_gap_fill(
 def reconstruct_hybrid_panorama(
     images: Sequence[np.ndarray],
     filenames: Sequence[str] | None = None,
-    algorithm: Algorithm = "orb",
+    algorithm: Algorithm = "sift",
     ransac_threshold: float = 4.0,
     fill_gaps: bool = True,
+    capture_views: Sequence[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """Reconstruct from real matches first, then complete only pixels without evidence."""
-    if not 6 <= len(images) <= 12:
-        raise StitchingError("Guided hybrid reconstruction requires 6 to 12 landscape images.")
-    analysis = analyze_image_sequence(images, filenames, algorithm)
+    if not 6 <= len(images) <= 24:
+        raise StitchingError("Guided hybrid reconstruction requires 6 to 24 landscape images.")
+    if capture_views is not None and (len(capture_views) != len(images) or any(view not in {"around", "top", "bottom"} for view in capture_views)):
+        raise StitchingError("Provide one valid capture view (around, top, bottom) for each image.")
+    if not 1.0 <= ransac_threshold <= 10.0:
+        raise StitchingError("RANSAC threshold must be between 1.0 and 10.0 pixels.")
+    started = perf_counter()
+    detector, norm, ratio_threshold = _detector_and_norm(algorithm)
+    prepared = prepare_spherical_matches(
+        images, detector, norm, ratio_threshold, ransac_threshold
+    )
+    analysis = analyze_image_sequence(
+        images, filenames, algorithm, ransac_threshold, prepared=prepared
+    )
     if not analysis["can_stitch"]:
+        if analysis["issues"]:
+            raise StitchingError(analysis["issues"][0]["message"])
         raise StitchingError("Image quality or overlap validation failed. Retake the flagged images before reconstruction.")
 
-    started = perf_counter()
-    panorama = images[0].copy()
-    evidence_mask = np.full(panorama.shape[:2], 255, dtype=np.uint8)
-    pair_metrics: list[PairMetrics] = []
-    for index, next_image in enumerate(images[1:], start=1):
-        panorama, evidence_mask, metrics = _stitch_pair(
-            panorama, next_image, algorithm, index, ransac_threshold, evidence_mask
-        )
-        pair_metrics.append(metrics)
-
-    panorama, evidence_mask = _fit_to_equirectangular(panorama, evidence_mask)
+    from .spherical import reconstruct_sphere
+    panorama, evidence_mask, pair_reports, camera_report = reconstruct_sphere(
+        images, detector, norm, ratio_threshold, ransac_threshold, prepared=prepared,
+        capture_views=capture_views,
+    )
     if fill_gaps:
         final, generated_mask, completion = placeholder_ai_gap_fill(panorama, evidence_mask)
     else:
@@ -407,22 +431,27 @@ def reconstruct_hybrid_panorama(
             "used": False,
             "method": "disabled",
             "regions": [],
-            "unresolved_regions": describe_missing_regions(evidence_mask),
+            "unresolved_regions": describe_missing_regions(evidence_mask, minimum_area=1),
             "filled_ratio": 0.0,
         }
 
-    average_inlier = sum(item.inlier_ratio for item in pair_metrics) / len(pair_metrics)
+    average_inlier = sum(item['inlier_ratio'] for item in pair_reports) / len(pair_reports)
     evidence_ratio = float(np.count_nonzero(evidence_mask)) / evidence_mask.size
     confidence = max(0.0, min(1.0, average_inlier * 0.65 + evidence_ratio * 0.35))
     disclosure = (
         "Some missing regions were completed by an inpainting placeholder and may not represent exact property details. "
-        "Only unmasked regions are supported by uploaded-image evidence."
+        "The generated mask identifies filled pixels; unresolved missing regions remain unsupported."
         if completion["used"] else
-        "This panorama is reconstructed from uploaded-image evidence; no completion was applied."
+        "This panorama is reconstructed from uploaded-image evidence; no completion was applied. Uncaptured areas remain blank."
     )
     metadata = {
         "algorithm": algorithm.upper(),
-        "pipeline": ["ORB feature detection" if algorithm == "orb" else "SIFT feature detection", "BFMatcher", "RANSAC homography", "warpPerspective", "gap completion"],
+        "projection": "equirectangular",
+        "spherical_projection": True,
+        "camera_report": camera_report,
+        "coverage_report": camera_report["coverage_report"],
+        "capture_views": list(capture_views) if capture_views is not None else None,
+        "pipeline": ["ORB feature detection" if algorithm == "orb" else "SIFT feature detection", "BFMatcher", "RANSAC homography", "camera rotation estimation", "bundle adjustment", "spherical projection", "feather blending", "gap completion"],
         "image_count": len(images),
         "output_width": int(final.shape[1]),
         "output_height": int(final.shape[0]),
@@ -431,7 +460,7 @@ def reconstruct_hybrid_panorama(
         "evidence_coverage_ratio": round(evidence_ratio, 6),
         "average_inlier_ratio": round(average_inlier, 4),
         "overlap_report": analysis["pairs"],
-        "ransac_report": [asdict(item) for item in pair_metrics],
+        "ransac_report": pair_reports,
         "ai_completion_used": completion["used"],
         "ai_completion_method": completion["method"],
         "ai_generated_regions": completion["regions"],

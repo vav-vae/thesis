@@ -260,7 +260,7 @@ export default function CreatePropertyPage() {
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-        <div className="max-w-4xl mx-auto flex items-center justify-between p-6">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-2 px-3 py-4 sm:gap-4 sm:p-6">
           <Link
             href="/broker"
             className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
@@ -268,13 +268,13 @@ export default function CreatePropertyPage() {
             <ChevronLeft size={20} />
             <span className="font-medium">Back</span>
           </Link>
-          <h1 className="text-2xl font-light text-slate-900">Create New Property</h1>
-          <div className="w-24" /> {/* Spacer for centering */}
+          <h1 className="min-w-0 flex-1 text-center text-lg font-light text-slate-900 sm:text-2xl">Create New Property</h1>
+          <div className="w-8 shrink-0 sm:w-24" /> {/* Spacer for centering */}
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-4xl mx-auto p-6 lg:p-10">
+      <main className="mx-auto max-w-4xl p-4 sm:p-6 lg:p-10">
         {/* Success State */}
         {success && (
           <div className="mb-8 p-4 bg-green-50 border border-green-200 rounded-xl flex items-start gap-3 animate-slide-down">
@@ -299,7 +299,7 @@ export default function CreatePropertyPage() {
 
         {/* Form Card */}
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="p-8 lg:p-10">
+          <div className="p-4 sm:p-8 lg:p-10">
             <div className="mb-8">
               <h2 className="text-2xl font-light text-slate-900 mb-2">Property Details</h2>
               <p className="text-slate-600">Fill in the information about your property.</p>
