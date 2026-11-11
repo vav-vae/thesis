@@ -20,7 +20,7 @@ from uuid import uuid4
 import cv2
 import httpx
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,9 +29,11 @@ from PIL import Image, UnidentifiedImageError
 from PIL.Image import DecompressionBombError, DecompressionBombWarning
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 try:
+    from .authorization import require_broker_access
     from .cloudinary_uploads import signed_upload
     from .notifications import FirestoreSubscriptionRepository, PushSubscriptionRequest
 except ImportError:
+    from authorization import require_broker_access
     from cloudinary_uploads import signed_upload
     from notifications import FirestoreSubscriptionRepository, PushSubscriptionRequest
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -587,6 +589,8 @@ class UploadSignatureRequest(BaseModel):
 
 @app.post("/uploads/sign")
 async def sign_cloudinary_upload(request: Request, payload: UploadSignatureRequest):
+    if payload.purpose == "panorama-source":
+        await require_broker_access(request)
     user_id = str(request.state.firebase_user["sub"])
     owner = cloudinary_owner_folder_id(user_id)
     folder = f"{CLOUDINARY_SOURCE_FOLDER}/{owner}" if payload.purpose == "panorama-source" else f"libot/{payload.purpose}s/{owner}"
@@ -617,7 +621,7 @@ async def upload_generated_image(contents: bytes, filename: str, content_type: s
     return secure_url
 
 
-@app.post("/validate")
+@app.post("/validate", dependencies=[Depends(require_broker_access)])
 async def validate_images(
     files: List[UploadFile] = File(...),
     algorithm: str = Form("orb"),
@@ -639,7 +643,7 @@ async def validate_images(
     return {"success": True, "analysis": analysis}
 
 
-@app.post("/validate/remote")
+@app.post("/validate/remote", dependencies=[Depends(require_broker_access)])
 async def validate_remote_images(request: Request, payload: RemoteValidationRequest):
     user_id = str(request.state.firebase_user["sub"])
     images, filenames = await read_remote_images(payload.image_urls, user_id)
@@ -657,7 +661,7 @@ async def validate_remote_images(request: Request, payload: RemoteValidationRequ
     return {"success": True, "analysis": analysis}
 
 
-@app.post("/stitch", status_code=status.HTTP_201_CREATED)
+@app.post("/stitch", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_broker_access)])
 async def stitch(
     files: List[UploadFile] = File(...),
     algorithm: str = Form("orb"),
@@ -749,7 +753,7 @@ async def build_hybrid_response(
     }
 
 
-@app.post("/reconstruct/hybrid", status_code=status.HTTP_201_CREATED)
+@app.post("/reconstruct/hybrid", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_broker_access)])
 async def reconstruct_hybrid(
     files: List[UploadFile] = File(...),
     algorithm: str = Form("orb"),
@@ -773,7 +777,7 @@ async def reconstruct_hybrid(
     )
 
 
-@app.post("/reconstruct/hybrid/remote", status_code=status.HTTP_201_CREATED)
+@app.post("/reconstruct/hybrid/remote", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_broker_access)])
 async def reconstruct_hybrid_remote(request: Request, payload: RemoteHybridRequest):
     user_id = str(request.state.firebase_user["sub"])
     if "application/x-ndjson" in request.headers.get("accept", ""):
@@ -842,7 +846,7 @@ async def reconstruct_hybrid_remote(request: Request, payload: RemoteHybridReque
     )
 
 
-@app.post("/stitch/four-view", status_code=status.HTTP_201_CREATED)
+@app.post("/stitch/four-view", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_broker_access)])
 async def stitch_four_view(
     front: UploadFile = File(...),
     left: UploadFile = File(...),

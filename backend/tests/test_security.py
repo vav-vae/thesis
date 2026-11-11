@@ -255,6 +255,11 @@ class FirebaseTokenVerifierTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ApiSecurityIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        account = patch("backend.authorization.read_account", new=AsyncMock(return_value={"role": "broker", "accountStatus": "active"}))
+        account.start()
+        self.addCleanup(account.stop)
+
     async def request(self, method: str, path: str, **kwargs) -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
