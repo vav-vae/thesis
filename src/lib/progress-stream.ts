@@ -1,3 +1,5 @@
+import { HttpResponseError } from "./http-response.ts";
+
 type ProgressEvent<T> = {
   type?: string;
   stage?: string;
@@ -10,6 +12,7 @@ export async function readProgressStream<T>(
   onProgress?: (stage: string) => void,
 ): Promise<T> {
   let complete: T | undefined;
+  let lastStage = "";
 
   const consumeLine = (line: string) => {
     if (!line.trim()) return;
@@ -19,10 +22,13 @@ export async function readProgressStream<T>(
       if (!parsed || typeof parsed !== "object") throw new Error("Invalid progress event");
       event = parsed as ProgressEvent<T>;
     } catch {
-      throw new Error("The panorama processor sent an unreadable progress update.");
+      throw new HttpResponseError("The panorama processor sent an unreadable progress update.", response);
     }
-    if (event.type === "progress" && typeof event.stage === "string") onProgress?.(event.stage);
-    if (event.type === "error") throw new Error(event.detail || "The panorama processor could not finish this tour.");
+    if (event.type === "progress" && typeof event.stage === "string") {
+      lastStage = event.stage;
+      onProgress?.(event.stage);
+    }
+    if (event.type === "error") throw new HttpResponseError(event.detail || "The panorama processor could not finish this tour.", response);
     if (event.type === "complete") complete = event.result;
   };
 
@@ -42,11 +48,14 @@ export async function readProgressStream<T>(
         if (done) break;
       }
       consumeLine(pending);
+    } catch (error) {
+      if (error instanceof HttpResponseError) throw error;
+      throw new HttpResponseError("The panorama response stream was interrupted.", response, { cause: error });
     } finally {
       reader.releaseLock();
     }
   }
 
-  if (complete === undefined) throw new Error("The panorama processor stopped before sending a result.");
+  if (complete === undefined) throw new HttpResponseError(`The panorama processor stopped before sending a result${lastStage ? ` during “${lastStage}”` : ""}. Your photos are still on this page; try generating again.`, response);
   return complete;
 }

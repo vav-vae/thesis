@@ -44,7 +44,7 @@ Upload controls include:
 - JPEG, PNG, and WEBP only, checked from both declared type and actual header;
 - 12.5 million decoded pixels per image and 100 million per request;
 - finite RANSAC thresholds between 1 and 10; and
-- route-specific image-count limits.
+- route-specific minimum image counts (the guided workflow has no fixed photo-count cap).
 
 The active broker workflow uploads source images directly from the browser to
 Cloudinary, then sends a small authenticated JSON request to
@@ -52,7 +52,8 @@ Cloudinary, then sends a small authenticated JSON request to
 controls:
 
 - 64 KiB maximum JSON request body;
-- 2–30 unique URLs for validation and 6–12 for hybrid reconstruction;
+- at least 2 unique URLs for validation and at least 6 for hybrid reconstruction,
+  with no fixed photo-count cap; aggregate byte, pixel, and time budgets still apply;
 - 2,048 characters per URL;
 - exact HTTPS host, Cloudinary account, versioned delivery path, configured
   source folder, and authenticated-user folder;

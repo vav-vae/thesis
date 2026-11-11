@@ -8,6 +8,8 @@ import { db } from "@/lib/firebase";
 import { isRemoteImageUrl } from "@/lib/cloudinary";
 import SafeImage from "@/components/SafeImage";
 import AppLogo from "@/components/AppLogo";
+import { isPublishedTour } from "@/lib/published-tour";
+import { isBrowsableProperty } from "@/lib/property-visibility";
 
 type Featured = { id: string; title?: string; location?: string; price?: string; image?: string };
 
@@ -22,13 +24,12 @@ export default function HomePage() {
     let cancelled = false;
     async function load() {
       try {
-        const [tours, active, legacy] = await Promise.all([
-          getDocs(query(collection(db, "roomTours"), where("status", "==", "published"))),
-          getDocs(query(collection(db, "properties"), where("status", "==", "active"))),
-          getDocs(query(collection(db, "properties"), where("status", "==", null))),
+        const [tours, properties] = await Promise.all([
+          getDocs(collection(db, "roomTours")),
+          getDocs(collection(db, "properties")),
         ]);
-        const ids = new Set(tours.docs.filter((item) => item.data().panoramaUrl).map((item) => String(item.data().propertyId)));
-        const listings = [...active.docs, ...legacy.docs].filter((item) => ids.has(item.id)).slice(0, 3).map((item) => ({ id: item.id, ...item.data() } as Featured));
+        const ids = new Set(tours.docs.filter((item) => isPublishedTour(item.data())).map((item) => String(item.data().propertyId)));
+        const listings = properties.docs.filter((item) => isBrowsableProperty(item.data()) && ids.has(item.id)).slice(0, 3).map((item) => ({ id: item.id, ...item.data() } as Featured));
         const covers = await Promise.all(listings.map(async (item) => {
           if (isRemoteImageUrl(item.image)) return item;
           try {

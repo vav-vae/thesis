@@ -1,5 +1,5 @@
 import { auth } from "@/lib/firebase";
-import { readJsonResponse } from "./http-response";
+import { HttpResponseError, readJsonResponse } from "./http-response";
 import { readProgressStream } from "./progress-stream";
 import type { CaptureView } from "./capture-guide";
 
@@ -43,6 +43,9 @@ export type HybridMetadata = {
   spherical_projection?: boolean;
   algorithm: string;
   image_count: number;
+  input_image_count?: number;
+  used_image_indices?: number[];
+  excluded_image_indices?: number[];
   output_width: number;
   output_height: number;
   total_processing_ms: number;
@@ -165,7 +168,7 @@ export async function reconstructHybridPanorama(
   const data = response.headers.get("content-type")?.includes("application/x-ndjson")
     ? await readProgressStream<HybridApiResponse>(response, options.onProgress)
     : await readJsonResponse<HybridApiResponse>(response, "Hybrid panorama reconstruction failed.");
-  if (!data.success) throw new Error(data.detail || "Hybrid panorama reconstruction failed.");
+  if (!data.success) throw new HttpResponseError(data.detail || "Hybrid panorama reconstruction failed.", response);
   return {
     panoramaUrl: resolveAssetUrl(data.panorama_url),
     aiMaskUrl: resolveAssetUrl(data.ai_mask_url),

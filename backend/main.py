@@ -13,7 +13,7 @@ import warnings
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from typing import List, Literal
+from typing import Callable, List, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -55,6 +55,10 @@ except ImportError:  # Supports `uvicorn main:app` when launched inside /backend
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
+logger.propagate = False
 STREAM_HEARTBEAT_SECONDS = 10
 default_output_dir = Path("/tmp/libot-outputs") if os.getenv("VERCEL") else BASE_DIR / "outputs"
 OUTPUT_DIR = Path(os.getenv("PANORAMA_OUTPUT_DIR", str(default_output_dir)))
@@ -102,19 +106,26 @@ cloudinary_source_path_pattern = "/".join(
 class RemoteValidationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    image_urls: list[str] = Field(min_length=2, max_length=30)
+    image_urls: list[str] = Field(min_length=2)
     algorithm: Literal["orb", "sift"] = "sift"
     ransac_threshold: FiniteFloat = Field(default=4.0, ge=1.0, le=10.0)
+    capture_views: list[Literal["around", "top", "bottom"]] | None = None
+
+    @model_validator(mode="after")
+    def validate_capture_views(self):
+        if self.capture_views is not None and len(self.capture_views) != len(self.image_urls):
+            raise ValueError("Provide one capture view for each image URL.")
+        return self
 
 
 class RemoteHybridRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    image_urls: list[str] = Field(min_length=6, max_length=24)
+    image_urls: list[str] = Field(min_length=6)
     algorithm: Literal["orb", "sift"] = "sift"
     ransac_threshold: FiniteFloat = Field(default=4.0, ge=1.0, le=10.0)
     fill_gaps: bool = True
-    capture_views: list[Literal["around", "top", "bottom"]] | None = Field(default=None, max_length=24)
+    capture_views: list[Literal["around", "top", "bottom"]] | None = None
 
     @model_validator(mode="after")
     def validate_capture_views(self):
@@ -593,8 +604,8 @@ async def validate_images(
     algorithm: str = Form("orb"),
     ransac_threshold: float = Form(4.0),
 ):
-    if not 2 <= len(files) <= 30:
-        raise HTTPException(status_code=422, detail="Upload between 2 and 30 overlapping images.")
+    if len(files) < 2:
+        raise HTTPException(status_code=422, detail="Upload at least 2 overlapping images.")
     normalized_algorithm = algorithm.strip().lower()
     if normalized_algorithm not in {"orb", "sift"}:
         raise HTTPException(status_code=422, detail="Algorithm must be either 'orb' or 'sift'.")
@@ -620,6 +631,7 @@ async def validate_remote_images(request: Request, payload: RemoteValidationRequ
             filenames,
             payload.algorithm,
             payload.ransac_threshold,
+            capture_views=payload.capture_views,
         )
     except StitchingError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -674,6 +686,7 @@ async def build_hybrid_response(
     ransac_threshold: float,
     fill_gaps: bool,
     capture_views: list[str] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict:
     try:
         panorama, generated_mask, metadata = await run_in_threadpool(
@@ -684,6 +697,7 @@ async def build_hybrid_response(
             ransac_threshold,
             fill_gaps,
             capture_views=capture_views,
+            on_progress=on_progress,
         )
     except StitchingError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -691,6 +705,8 @@ async def build_hybrid_response(
         raise HTTPException(status_code=500, detail="OpenCV failed during hybrid reconstruction.") from error
 
     identifier = uuid4().hex
+    if on_progress:
+        on_progress("Saving the generated tour")
     panorama_name = f"hybrid-{identifier}.jpg"
     mask_name = f"hybrid-{identifier}-ai-mask.png"
     panorama_encoded, mask_encoded = await run_in_threadpool(
@@ -722,8 +738,8 @@ async def reconstruct_hybrid(
     fill_gaps: bool = Form(True),
 ):
     """Evidence-first reconstruction with an auditable missing-region mask."""
-    if not 6 <= len(files) <= 24:
-        raise HTTPException(status_code=422, detail="Upload 6 to 24 overlapping landscape images, including ceiling and floor views.")
+    if len(files) < 6:
+        raise HTTPException(status_code=422, detail="Upload at least 6 overlapping landscape images, including ceiling and floor views.")
     normalized_algorithm = algorithm.strip().lower()
     if normalized_algorithm not in {"orb", "sift"}:
         raise HTTPException(status_code=422, detail="Algorithm must be either 'orb' or 'sift'.")
@@ -744,11 +760,17 @@ async def reconstruct_hybrid_remote(request: Request, payload: RemoteHybridReque
     if "application/x-ndjson" in request.headers.get("accept", ""):
         async def stream_result():
             stage = "Downloading photos"
+            started = time.monotonic()
+
+            def update_stage(value: str):
+                nonlocal stage
+                stage = value
+                logger.info("panorama_progress request_id=%s photos=%s elapsed_seconds=%.1f stage=%s", getattr(request.state, "request_id", "unknown"), len(payload.image_urls), time.monotonic() - started, value)
 
             async def run_reconstruction():
                 nonlocal stage
                 images, filenames = await read_remote_images(payload.image_urls, user_id)
-                stage = "Reconstructing and saving the tour"
+                update_stage("Checking photo detail and overlap")
                 return await build_hybrid_response(
                     images,
                     filenames,
@@ -756,6 +778,7 @@ async def reconstruct_hybrid_remote(request: Request, payload: RemoteHybridReque
                     float(payload.ransac_threshold),
                     payload.fill_gaps,
                     capture_views=payload.capture_views,
+                    on_progress=update_stage,
                 )
 
             task = asyncio.create_task(run_reconstruction())
@@ -771,11 +794,13 @@ async def reconstruct_hybrid_remote(request: Request, payload: RemoteHybridReque
                 try:
                     result = task.result()
                 except HTTPException as error:
+                    logger.warning("panorama_failed photos=%s elapsed_seconds=%.1f stage=%s detail=%s", len(payload.image_urls), time.monotonic() - started, stage, error.detail)
                     yield json.dumps({"type": "error", "detail": str(error.detail)}) + "\n"
                 except Exception:
-                    logger.exception("Panorama reconstruction stream failed")
+                    logger.exception("Panorama reconstruction stream failed: photos=%s elapsed_seconds=%.1f stage=%s", len(payload.image_urls), time.monotonic() - started, stage)
                     yield json.dumps({"type": "error", "detail": "The panorama processor could not finish this tour. Please retry."}) + "\n"
                 else:
+                    logger.info("panorama_complete photos=%s elapsed_seconds=%.1f", len(payload.image_urls), time.monotonic() - started)
                     yield json.dumps({"type": "complete", "result": result}) + "\n"
             finally:
                 if not task.done():

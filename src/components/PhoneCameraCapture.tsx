@@ -4,24 +4,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Camera, CameraIcon, Check, Compass, LoaderCircle, Maximize2, Minimize2, MoreHorizontal, RefreshCcw, RotateCcw, SwitchCamera, Upload, X } from "lucide-react";
-import { CAPTURE_GUIDE, rearCameraPitch, type CaptureView } from "@/lib/capture-guide";
+import { CAPTURE_GUIDE, CAPTURE_VIEWS, CAPTURE_TURN_STEP, MIN_CAPTURE_IMAGES, captureAlignment, rearCameraHeading, rearCameraPitch, type CapturePhase, type CaptureView } from "@/lib/capture-guide";
 import styles from "./PhoneCameraCapture.module.css";
+import CapturedPhotoPreview, { LocalCaptureImage } from "./CapturedPhotoPreview";
 
 type PhoneCameraCaptureProps = {
   imageNumber: number;
   captureView?: CaptureView;
-  previousHeading?: number | null;
+  onCaptureViewChange?: (view: CaptureView) => void;
   onCapture: (file: File, heading?: number) => void | boolean | Promise<void | boolean>;
   onClose: () => void;
+  onFinish?: () => void;
+  onDebug?: (message: string, detail?: string) => void;
 };
-
-function normalizeHeading(value: number) {
-  return ((value % 360) + 360) % 360;
-}
-
-function shortestTurn(from: number, to: number) {
-  return ((to - from + 540) % 360) - 180;
-}
 
 function cameraMessage(error: unknown) {
   const name = error instanceof DOMException ? error.name : "";
@@ -33,33 +28,57 @@ function cameraMessage(error: unknown) {
   return "The live camera could not start. Retry or use your phone’s native camera.";
 }
 
-export default function PhoneCameraCapture({ imageNumber, captureView = "around", previousHeading, onCapture, onClose }: PhoneCameraCaptureProps) {
+export default function PhoneCameraCapture({ imageNumber, captureView = "around", onCaptureViewChange, onCapture, onClose, onFinish, onDebug }: PhoneCameraCaptureProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cameraRequestRef = useRef(0);
   const previewUrlRef = useRef("");
+  const captureBusyRef = useRef(false);
   const [starting, setStarting] = useState(true);
   const [saving, setSaving] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [captureError, setCaptureError] = useState("");
   const [motionError, setMotionError] = useState("");
-  const [heading, setHeading] = useState<number | null>(null);
-  const [pitch, setPitch] = useState<number | null>(null);
+  const [orientation, setOrientation] = useState<{ heading: number | null; pitch: number | null; time: number } | null>(null);
+  const [sensorClock, setSensorClock] = useState(0);
+  const [previousHeadings, setPreviousHeadings] = useState<Partial<Record<`${CaptureView}:${CapturePhase}`, number | null>>>({});
+  const [capturePhase, setCapturePhase] = useState<CapturePhase>("bridge");
+  const [rearFacing, setRearFacing] = useState(true);
   const [motionEnabled, setMotionEnabled] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceIndex, setDeviceIndex] = useState(0);
-  const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
+  const [preview, setPreview] = useState<{ file: File; url: string; heading: number | null } | null>(null);
+  const [reviewEveryPhoto, setReviewEveryPhoto] = useState(false);
+  const [savedMessage, setSavedMessage] = useState("");
+  const [savedPhoto, setSavedPhoto] = useState<{ file: File; number: number; view: CaptureView } | null>(null);
+  const [savedPreviewOpen, setSavedPreviewOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const optionsButtonRef = useRef<HTMLButtonElement>(null);
+  const onDebugRef = useRef(onDebug);
+  useEffect(() => { onDebugRef.current = onDebug; }, [onDebug]);
 
-  const targetHeading = captureView !== "around" || previousHeading == null ? null : normalizeHeading(previousHeading + 45);
-  const turn = heading != null && targetHeading != null ? shortestTurn(heading, targetHeading) : null;
-  const angleReady = targetHeading == null || (turn != null && Math.abs(turn) <= 12);
+  const sensorFresh = motionEnabled && rearFacing && orientation != null && sensorClock - orientation.time < 1500;
+  const heading = sensorFresh ? orientation.heading : null;
+  const pitch = sensorFresh ? orientation.pitch : null;
+  const phase = captureView === "around" ? "ring" : capturePhase;
+  const headingKey = `${captureView}:${phase}` as const;
+  const alignment = captureAlignment(captureView, phase, pitch, heading, previousHeadings[headingKey] ?? null);
+  const angleReady = alignment.ready;
+  const targetLabel = captureView === "around" ? "Level row" : phase === "bridge" ? "Connect to the wall row" : phase === "pole" ? captureView === "top" ? "Directly overhead" : "Directly below" : captureView === "top" ? "Ceiling ring" : "Floor ring";
+  const savedCount = imageNumber - 1;
+  const guideMessage = !motionEnabled ? (captureView === "around" ? "Keep level · overlap the previous view by 30–50%"
+    : phase === "pole" ? `Point ${captureView === "top" ? "directly overhead" : "directly below"} · overlap the ${captureView === "top" ? "ceiling" : "floor"} ring`
+    : `Tilt ${captureView === "top" ? "up" : "down"} about ${Math.abs(alignment.targetPitch)}° · overlap the previous row by 30–50%`)
+    : !rearFacing ? "Switch to the rear camera for angle guidance"
+    : !sensorFresh || pitch == null ? "Waiting for motion data · follow the visual overlap guide"
+    : alignment.message;
+
+  const resetHeadings = () => setPreviousHeadings({});
 
   useEffect(() => {
     if (!optionsOpen) return;
@@ -95,6 +114,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     setCameraError("");
     setCaptureError("");
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      onDebugRef.current?.("Live camera is unavailable in this browser context.", `secureContext=${window.isSecureContext}; getUserMedia=${Boolean(navigator.mediaDevices?.getUserMedia)}; userAgent=${navigator.userAgent}`);
       setCameraError(!window.isSecureContext
         ? "Live camera requires HTTPS. Open the deployed HTTPS site on your phone, or use “Use phone camera” below."
         : "Live camera is unavailable in this browser. Use your phone’s native camera below.");
@@ -103,14 +123,15 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     }
     try {
       const videoConstraints: MediaTrackConstraints = requestedDeviceId
-        ? { deviceId: { exact: requestedDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-        : { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } };
+        ? { deviceId: { exact: requestedDeviceId }, aspectRatio: { ideal: 4 / 3 }, width: { ideal: 1920 }, height: { ideal: 1440 } }
+        : { facingMode: { ideal: "environment" }, aspectRatio: { ideal: 4 / 3 }, width: { ideal: 1920 }, height: { ideal: 1440 } };
       const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraints });
       if (request !== cameraRequestRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
       streamRef.current = stream;
+      setRearFacing(stream.getVideoTracks()[0]?.getSettings().facingMode !== "user");
       setActiveStream(stream);
       let available: MediaDeviceInfo[] = [];
       if (navigator.mediaDevices.enumerateDevices) {
@@ -131,13 +152,14 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       console.error("Unable to start phone camera:", error);
+      onDebugRef.current?.("Live camera failed to start.", error instanceof Error ? `${error.name}: ${error.message}\n${error.stack || ""}` : String(error));
       setCameraError(cameraMessage(error));
       setStarting(false);
     }
   }, [stopCamera]);
 
   useEffect(() => {
-    if (preview || !activeStream || !videoRef.current) return;
+    if (!activeStream || !videoRef.current) return;
     const video = videoRef.current;
     const request = cameraRequestRef.current;
     let cancelled = false;
@@ -149,6 +171,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     }).catch((error) => {
       if (cancelled || request !== cameraRequestRef.current) return;
       console.error("Unable to play phone camera preview:", error);
+      onDebugRef.current?.("Live camera preview playback failed.", error instanceof Error ? `${error.name}: ${error.message}\n${error.stack || ""}` : String(error));
       setCameraError(cameraMessage(error));
       stopCamera();
       setStarting(false);
@@ -157,7 +180,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
       cancelled = true;
       if (video.srcObject === activeStream) video.srcObject = null;
     };
-  }, [activeStream, preview, stopCamera]);
+  }, [activeStream, stopCamera]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void startCamera(), 0);
@@ -184,44 +207,69 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
 
   useEffect(() => {
     if (!motionEnabled) return;
+    let lastUpdate = 0;
     const updateHeading = (event: DeviceOrientationEvent) => {
-      const compassEvent = event as DeviceOrientationEvent & { webkitCompassHeading?: number };
-      const nextHeading = compassEvent.webkitCompassHeading ?? (event.alpha == null ? null : normalizeHeading(360 - event.alpha));
-      if (nextHeading != null) setHeading(nextHeading);
-      const nextPitch = rearCameraPitch(event.beta, event.gamma);
-      setPitch(nextPitch == null ? null : Math.round(nextPitch));
+      const now = Date.now();
+      if (now - lastUpdate < 100) return;
+      lastUpdate = now;
+      setOrientation({ heading: rearCameraHeading(event.alpha, event.beta, event.gamma), pitch: rearCameraPitch(event.beta, event.gamma), time: now });
+      setSensorClock(now);
     };
+    const timer = window.setInterval(() => setSensorClock(Date.now()), 500);
     window.addEventListener("deviceorientation", updateHeading, true);
-    return () => window.removeEventListener("deviceorientation", updateHeading, true);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("deviceorientation", updateHeading, true);
+    };
   }, [motionEnabled]);
 
   const enableMotionGuide = async () => {
     setMotionError("");
     try {
+      if (typeof DeviceOrientationEvent === "undefined") throw new Error("Motion sensors are unavailable on this device.");
       const orientationApi = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<"granted" | "denied"> };
       if (orientationApi.requestPermission && await orientationApi.requestPermission() !== "granted") throw new Error("Motion permission was denied.");
+      setOrientation(null);
+      resetHeadings();
       setMotionEnabled(true);
     } catch (error) {
       setMotionError(error instanceof Error ? error.message : "The angle guide is unavailable.");
+      onDebugRef.current?.("Motion guide could not be enabled.", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
     }
   };
 
-  const createPreview = (file: File) => {
+  const createPreview = (file: File, capturedHeading: number | null = null) => {
     setOptionsOpen(false);
     clearPreview();
     const url = URL.createObjectURL(file);
     previewUrlRef.current = url;
-    setPreview({ file, url });
-    stopCamera();
+    setPreview({ file, url, heading: capturedHeading });
+  };
+
+  const savePhoto = async (file: File, capturedHeading: number | null) => {
+    const accepted = await onCapture(file, capturedHeading ?? undefined);
+    if (accepted === false) throw new Error("This photo was not accepted. Follow the selected view’s capture guide and try again.");
+    if (phase !== "pole") setPreviousHeadings((previous) => ({ ...previous, [headingKey]: capturedHeading }));
+    setSavedMessage(`Photo ${imageNumber} saved · continue capturing`);
+    setSavedPhoto({ file, number: imageNumber, view: captureView });
+    clearPreview();
   };
 
   const capture = async () => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight || saving) {
+    if (captureBusyRef.current) return;
+    if (!video || !video.videoWidth || !video.videoHeight) {
       setCaptureError("The camera is still preparing. Wait a moment and try again.");
       return;
     }
     setCaptureError("");
+    setSavedMessage("");
+    // Snapshot the lens heading before JPEG encoding or review can move it.
+    const capturedHeading = sensorFresh && orientation && Date.now() - orientation.time < 1500 ? heading : null;
+    const request = cameraRequestRef.current;
+    captureBusyRef.current = true;
+    setSaving(true);
+    let capturedFile: File | null = null;
     try {
       const canvas = document.createElement("canvas");
       const rotateToLandscape = isLandscape && video.videoHeight > video.videoWidth;
@@ -238,45 +286,53 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+      if (request !== cameraRequestRef.current) return;
       if (!blob) throw new Error("The camera frame could not be saved.");
-      createPreview(new File([blob], `capture-${captureView}-${imageNumber}-${Date.now()}.jpg`, { type: "image/jpeg", lastModified: Date.now() }));
+      capturedFile = new File([blob], `capture-${captureView}-${imageNumber}-${Date.now()}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+      if (reviewEveryPhoto) createPreview(capturedFile, capturedHeading);
+      else await savePhoto(capturedFile, capturedHeading);
     } catch (error) {
+      if (capturedFile) createPreview(capturedFile, capturedHeading);
+      onDebugRef.current?.("Live camera photo capture failed.", error instanceof Error ? `${error.name}: ${error.message}\n${error.stack || ""}` : String(error));
       setCaptureError(error instanceof Error ? error.message : "The image could not be captured.");
+    } finally {
+      captureBusyRef.current = false;
+      setSaving(false);
     }
   };
 
   const acceptPhoto = async () => {
-    if (!preview || saving) return;
+    if (!preview || captureBusyRef.current) return;
+    captureBusyRef.current = true;
     try {
       setSaving(true);
       setCaptureError("");
-      const accepted = await onCapture(preview.file, heading ?? undefined);
-      if (accepted === false) {
-        setCaptureError("This photo was not accepted. Keep landscape framing and follow the selected view’s capture guide.");
-        setSaving(false);
-        return;
-      }
-      clearPreview();
-      onClose();
+      await savePhoto(preview.file, preview.heading);
     } catch (error) {
+      onDebugRef.current?.("Captured photo could not be added to the tour.", error instanceof Error ? `${error.name}: ${error.message}\n${error.stack || ""}` : String(error));
       setCaptureError(error instanceof Error ? error.message : "The photo could not be added.");
+    } finally {
+      captureBusyRef.current = false;
       setSaving(false);
     }
   };
 
   const retake = async () => {
+    setCaptureError("");
     clearPreview();
-    await startCamera(devices[deviceIndex]?.deviceId);
+    if (!streamRef.current) await startCamera(devices[deviceIndex]?.deviceId);
   };
 
   const switchCamera = async () => {
     if (devices.length < 2) return;
     const next = (deviceIndex + 1) % devices.length;
     setDeviceIndex(next);
+    resetHeadings();
     await startCamera(devices[next].deviceId);
   };
 
   const close = () => {
+    if (captureBusyRef.current) return;
     stopCamera();
     clearPreview();
     onClose();
@@ -295,34 +351,65 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     <div ref={dialogRef} className="fixed inset-0 z-[100] flex h-dvh w-screen items-center justify-center bg-black" role="dialog" aria-modal="true" aria-label={`Capture image ${imageNumber}`}>
       <div className={styles.camera}>
         <header className={styles.header}>
-          <h2 className={styles.title}>{preview ? "Review photo" : `Photo ${imageNumber}`}<span> · {CAPTURE_GUIDE[captureView].label}</span></h2>
-          <button type="button" onClick={close} aria-label="Close camera" className={styles.iconButton}><X size={20} /></button>
+          <div className={styles.titleBlock}>
+            <p className={styles.eyebrow}>Live capture <span aria-hidden="true">·</span> {savedCount} saved</p>
+            <h2 className={styles.title}>{preview ? "Review photo" : `Photo ${imageNumber}`}<span> · {CAPTURE_GUIDE[captureView].label}</span></h2>
+          </div>
+          <div className={styles.headerActions}>
+            {savedPhoto && <button type="button" disabled={saving} aria-label="Preview last photo" title="Preview last photo" onClick={() => setSavedPreviewOpen(true)} className={styles.lastPhoto}><LocalCaptureImage file={savedPhoto.file} alt="Last saved photo" className="size-full object-cover" /><span className="absolute inset-x-0 bottom-0 bg-black/70 text-[9px] text-white">Preview</span></button>}
+            <button type="button" onClick={close} disabled={saving || preview != null} className={styles.doneAction}>Review photos</button>
+          </div>
         </header>
 
         <div className={styles.viewfinder}>
-          {preview ? <img src={preview.url} alt="Captured photo preview" className={styles.media} /> : <video ref={videoRef} playsInline muted autoPlay className={styles.media} />}
+          <video ref={videoRef} playsInline muted autoPlay className={styles.media} style={{ visibility: preview ? "hidden" : "visible" }} />
+          {preview && <img src={preview.url} alt="Captured photo preview" className={`${styles.media} absolute inset-0`} />}
           {starting && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950"><LoaderCircle className="animate-spin text-blue-300" size={32} /><p className="text-sm text-white/70">Starting camera…</p></div>}
           {!preview && cameraReady && <>
             {motionEnabled && <>
               <div className="pointer-events-none absolute inset-y-0 left-1/4 border-l border-dashed border-white/25" />
               <div className="pointer-events-none absolute inset-y-0 right-1/4 border-r border-dashed border-white/25" />
             </>}
+            {motionEnabled && sensorFresh && pitch != null && <div className={styles.alignmentTarget} data-ready={angleReady} aria-hidden="true">
+              <span className={styles.targetRing} />
+              <span className={styles.targetDot} style={{ transform: `translate(${Math.max(-70, Math.min(70, (alignment.turn ?? 0) * 2))}px, ${Math.max(-70, Math.min(70, -(alignment.pitchError ?? 0) * 2))}px)` }} />
+            </div>}
             <div className={styles.hint}>
-              {captureView === "top" ? <ArrowUp size={18} /> : captureView === "bottom" ? <ArrowDown size={18} /> : motionEnabled && turn != null ? Math.abs(turn) <= 12 ? <Check size={18} className="text-emerald-300" /> : turn > 0 ? <ArrowRight size={18} /> : <ArrowLeft size={18} /> : null}
-              <p>{captureView !== "around" ? CAPTURE_GUIDE[captureView].title : motionEnabled && turn != null ? angleReady ? "Angle ready · hold steady" : `Turn ${Math.round(Math.abs(turn))}° · keep 30–50% overlap` : imageNumber === 1 ? "Keep level · choose a starting view" : "Keep level · overlap the previous photo by 30–50%"}{pitch != null && ` · Tilt ${pitch}°`}</p>
+              {angleReady ? <Check size={18} className="text-emerald-300" /> : alignment.direction === "up" ? <ArrowUp size={18} /> : alignment.direction === "down" ? <ArrowDown size={18} /> : alignment.direction === "right" ? <ArrowRight size={18} /> : alignment.direction === "left" ? <ArrowLeft size={18} /> : null}
+              <p>{guideMessage}{pitch != null && ` · Tilt ${Math.round(pitch)}°`}</p>
             </div>
           </>}
           {!starting && !preview && !cameraReady && <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center"><span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10"><CameraIcon size={30} /></span><p role="alert" className="mt-5 max-w-md text-sm leading-6 text-red-200">{cameraError}</p><button type="button" onClick={() => void startCamera()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-900"><RefreshCcw size={17} />Retry live camera</button></div>}
         </div>
 
+        {!preview && <div className={styles.sessionBar}>
+          <div className={styles.sessionIntro}>
+            <p className={styles.stepLabel}>Choose where to aim</p>
+            {!motionEnabled && <button type="button" onClick={() => void enableMotionGuide()} className={styles.guideAction}><Compass size={15} />Angle guide</button>}
+          </div>
+          {onCaptureViewChange && <div className={styles.viewChoices} role="group" aria-label="Photo type">
+            {CAPTURE_VIEWS.map((view) => <button key={view} type="button" disabled={saving} aria-pressed={captureView === view} onClick={() => { setCapturePhase("bridge"); setSavedMessage(""); onCaptureViewChange(view); }}>{CAPTURE_GUIDE[view].label}</button>)}
+          </div>}
+          {captureView !== "around" && <div className={`${styles.viewChoices} ${styles.phaseChoices}`} role="group" aria-label={`${captureView === "top" ? "Ceiling" : "Floor"} capture target`}>
+            <button type="button" disabled={saving} aria-pressed={phase === "bridge"} onClick={() => { setCapturePhase("bridge"); setSavedMessage(""); }}>1 · Include wall<br />{captureView === "top" ? "+30°" : "−30°"}</button>
+            <button type="button" disabled={saving} aria-pressed={phase === "ring"} onClick={() => { setCapturePhase("ring"); setSavedMessage(""); }}>2 · {captureView === "top" ? "Ceiling" : "Floor"}<br />{captureView === "top" ? "+60°" : "−60°"}</button>
+            <button type="button" disabled={saving} aria-pressed={phase === "pole"} onClick={() => { setCapturePhase("pole"); setSavedMessage(""); }}>3 · {captureView === "top" ? "Overhead" : "Below"}<br />{captureView === "top" ? "+90°" : "−90°"}</button>
+          </div>}
+          <p className={styles.captureTip}>{targetLabel} · aim for {alignment.targetPitch}°{captureView !== "around" && (phase === "bridge" ? " · keep wall detail in view" : phase === "ring" ? " · overlap the 30° row" : " · overlap the 60° row")}</p>
+          {!isLandscape && <p className={styles.orientationNote}>Rotate your phone to landscape for a wider photo.</p>}
+          <div className={styles.sessionNext}>
+            <p role="status">{saving ? "Saving photo…" : savedMessage || (savedCount < MIN_CAPTURE_IMAGES ? `${MIN_CAPTURE_IMAGES - savedCount} more photo${MIN_CAPTURE_IMAGES - savedCount === 1 ? "" : "s"} to reach the minimum` : onFinish ? "Ready to check and build your tour" : "Review photos to check the set")}</p>
+            {onFinish && <button type="button" disabled={saving} onClick={() => { if (captureBusyRef.current) return; stopCamera(); clearPreview(); onFinish(); }} className={styles.finishAction}><Check size={17} />Finish &amp; generate</button>}
+          </div>
+        </div>}
         <footer className={styles.controls}>
           {preview ? <>
             <button type="button" onClick={() => void retake()} disabled={saving} className={styles.secondaryAction}><RotateCcw size={20} /><span>Retake</span></button>
-            <button type="button" onClick={() => void acceptPhoto()} disabled={saving} className={styles.acceptAction}>{saving ? <LoaderCircle className="animate-spin" size={24} /> : <Check size={24} />}<span>{saving ? "Adding…" : "Use photo"}</span></button>
+            <button type="button" onClick={() => void acceptPhoto()} disabled={saving} className={styles.acceptAction}>{saving ? <LoaderCircle className="animate-spin" size={24} /> : <Check size={24} />}<span>{saving ? "Adding…" : "Use & next"}</span></button>
           </> : <>
             <button ref={optionsButtonRef} type="button" onClick={() => setOptionsOpen(!optionsOpen)} aria-label="Camera options and tips" aria-expanded={optionsOpen} aria-controls="phone-camera-options" className={styles.secondaryAction}><MoreHorizontal size={24} /><span>Options</span></button>
-            <button type="button" onClick={() => void capture()} disabled={starting || saving || !cameraReady} aria-label="Capture photo" className={styles.shutter}><Camera size={28} /><span className="sr-only">Capture</span></button>
-            {devices.length > 1 && <button type="button" onClick={() => void switchCamera()} disabled={starting} aria-label="Switch camera" className={styles.secondaryAction}><SwitchCamera size={24} /><span>Flip</span></button>}
+            <button type="button" onClick={() => void capture()} disabled={starting || saving || !cameraReady} aria-label="Capture photo" className={styles.shutter}>{saving ? <LoaderCircle className="animate-spin" size={28} /> : <Camera size={28} />}<span className="sr-only">Capture</span></button>
+            {devices.length > 1 && <button type="button" onClick={() => void switchCamera()} disabled={starting || saving} aria-label="Switch camera" className={styles.secondaryAction}><SwitchCamera size={24} /><span>Flip</span></button>}
           </>}
         </footer>
 
@@ -331,19 +418,20 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
           <section id="phone-camera-options" aria-label="Camera options and tips" className={styles.options}>
             <div className="flex items-center justify-between gap-4"><h3 className="text-sm font-semibold">Camera options</h3><button type="button" aria-label="Close camera options" onClick={() => { setOptionsOpen(false); optionsButtonRef.current?.focus(); }} className={styles.iconButton}><X size={18} /></button></div>
             <p className="text-xs leading-relaxed text-white/65">{CAPTURE_GUIDE[captureView].direction}</p>
-            <button type="button" onClick={() => motionEnabled ? setMotionEnabled(false) : void enableMotionGuide()} className={styles.optionAction} aria-pressed={motionEnabled}><Compass size={18} />{motionEnabled ? "Turn off angle / tilt guide" : "Enable angle / tilt guide"}</button>
-            <p className="text-xs text-white/50">The angle guide is optional and does not verify coverage.</p>
+            <button type="button" onClick={() => { resetHeadings(); if (motionEnabled) setMotionEnabled(false); else void enableMotionGuide(); }} className={styles.optionAction} aria-pressed={motionEnabled}><Compass size={18} />{motionEnabled ? "Turn off angle / tilt guide" : "Enable angle / tilt guide"}</button>
+            <p className="text-xs text-white/50">Turns use an estimated {CAPTURE_TURN_STEP}° spacing. Check 30–50% overlap visually. Complete the 30° row, then 60°, then directly up/down; keep shared detail between rows.</p>
+            <label className={styles.optionAction}><input type="checkbox" checked={reviewEveryPhoto} onChange={(event) => setReviewEveryPhoto(event.target.checked)} />Review every photo before saving</label>
             <button type="button" onClick={() => void toggleFullscreen()} className={styles.optionAction}>{isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}{isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}</button>
             <label className={styles.optionAction}><Upload size={18} />Use phone camera<input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) createPreview(file); event.currentTarget.value = ""; }} /></label>
           </section>
         </>}
 
-        {(captureError || motionError || (!preview && !isLandscape) || (!preview && !starting && !cameraReady)) && <div className={styles.feedback}>
+        {(captureError || motionError || (!preview && !starting && !cameraReady)) && <div className={styles.feedback}>
           {captureError && <p role="alert" className="text-red-200">{captureError}</p>}
           {motionError && <p role="status" className="text-amber-200">{motionError} You can continue without it.</p>}
-          {!preview && !isLandscape && <p className="text-amber-200">Rotate your phone to landscape for a wider photo.</p>}
           {!preview && !starting && !cameraReady && <label className={styles.optionAction}><Upload size={18} />Use phone camera<input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) createPreview(file); event.currentTarget.value = ""; }} /></label>}
         </div>}
+        {savedPreviewOpen && savedPhoto && <CapturedPhotoPreview file={savedPhoto.file} index={savedPhoto.number - 1} total={imageNumber - 1} view={savedPhoto.view} onClose={() => setSavedPreviewOpen(false)} onImageError={() => onDebugRef.current?.("Last photo preview failed.", `Photo ${savedPhoto.number}: ${savedPhoto.file.name}`)} />}
       </div>
     </div>
   );

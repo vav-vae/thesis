@@ -1,5 +1,7 @@
 """Geometry regression checks using a reproducible, synthetic camera sweep."""
 import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
@@ -7,10 +9,10 @@ import numpy as np
 from backend.services.panorama_service import (
     StitchingError, _detector_and_norm, analyze_image_sequence, reconstruct_hybrid_panorama,
 )
-from backend.services.spherical import reconstruct_sphere, spherical_coverage
+from backend.services.spherical import _alignment_quality, _refine_cameras, _rotation_condition, prepare_spherical_matches, reconstruct_sphere, spherical_coverage
 
 
-def camera_sweep(include_poles=False):
+def camera_sweep(include_poles=False, *, poses=None, width=960, height=720):
     random = np.random.default_rng(42)
     texture = random.integers(30, 225, (1024, 2048, 3), dtype=np.uint8)
     texture = cv2.GaussianBlur(texture, (5, 5), 0)
@@ -18,13 +20,14 @@ def camera_sweep(include_poles=False):
         x, y = random.integers(0, 2048), random.integers(160, 860)
         color = tuple(int(v) for v in random.integers(0, 255, 3))
         cv2.circle(texture, (int(x), int(y)), int(random.integers(3, 12)), color, -1)
-    width, height = 960, 720
     focal = width / (2 * np.tan(np.deg2rad(100) / 2))
     x, y = np.meshgrid((np.arange(width) - width / 2) / focal, (np.arange(height) - height / 2) / focal)
     images = []
     views = [(yaw, 0) for yaw in range(0, 360, 60)]
     if include_poles:
         views += [(yaw, pitch) for pitch in (-60, 60) for yaw in (0, 120, 240)]
+    if poses is not None:
+        views = poses
     for yaw, pitch in views:
         angle = np.deg2rad(yaw)
         tilt = np.deg2rad(pitch)
@@ -39,6 +42,116 @@ def camera_sweep(include_poles=False):
 
 
 class SphericalTests(unittest.TestCase):
+    def test_collapsed_and_reflected_homographies_are_not_camera_rotations(self):
+        collapsed = np.array([[1., 0., 100.], [0., 1e-6, 20.], [0., 0., 1.]])
+        reflected = np.diag([-1., 1., 1.])
+        self.assertGreater(_rotation_condition(collapsed, (1600, 1200), (1600, 1200)), 2.5)
+        self.assertGreater(_rotation_condition(reflected, (1600, 1200), (1600, 1200)), 2.5)
+        rotation = cv2.Rodrigues(np.array([.1, .4, -.1]))[0]
+        intrinsic = np.diag([1280., 1280., 1.])
+        physical = intrinsic @ rotation @ np.linalg.inv(intrinsic)
+        self.assertLess(_rotation_condition(physical, (1600, 1200), (1600, 1200)), 2.5)
+
+    @unittest.skipUnless(Path('test image/new_test/capture-around-12-1794031489124.jpg').exists(), 'Private live-capture fixture is local only')
+    def test_real_live_capture_low_confidence_overlap_is_not_rejected(self):
+        sources = [cv2.imread(str(path)) for path in sorted(Path('test image/new_test').glob('capture-around-1[23]-*.jpg'))]
+        self.assertEqual(len(sources), 2)
+        cv2.setRNGSeed(42)
+        analysis = analyze_image_sequence(sources)
+        self.assertTrue(analysis['can_stitch'], analysis)
+        self.assertGreaterEqual(analysis['pairs'][0]['inliers'], 15)
+
+    def test_failed_ray_solver_recovers_with_real_pixel_reprojection(self):
+        failed = Mock()
+        failed.apply.return_value = (False, None)
+        cv2.setRNGSeed(42)
+        with patch('backend.services.spherical.cv2.detail_BundleAdjusterRay', return_value=failed):
+            panorama, _, metadata = reconstruct_hybrid_panorama(camera_sweep(), fill_gaps=False)
+        report = metadata['camera_report']
+        self.assertEqual(panorama.shape, (2048, 4096, 3))
+        self.assertEqual(report['alignment_method'], 'reprojection')
+        self.assertTrue(report['alignment_recovered'])
+        self.assertLess(report['median_reprojection_error_px'], 2)
+        self.assertEqual(metadata['used_image_indices'], list(range(6)))
+
+    def test_nonfinite_ray_result_also_recovers_from_untouched_cameras(self):
+        cv2.setRNGSeed(42)
+        prepared = prepare_spherical_matches(camera_sweep(), *_detector_and_norm('sift'))
+        _, bad = cv2.detail_HomographyBasedEstimator().apply(prepared.features, prepared.pairwise, None)
+        bad[0].focal = float('nan')
+        invalid_solver = Mock()
+        invalid_solver.apply.return_value = (True, bad)
+        with patch('backend.services.spherical.cv2.detail_BundleAdjusterRay', return_value=invalid_solver):
+            cameras, report = _refine_cameras(prepared)
+        self.assertTrue(all(np.isfinite(camera.focal) for camera in cameras))
+        self.assertTrue(report['alignment_recovered'])
+        self.assertTrue(report['valid'])
+
+    def test_finite_but_wrong_camera_geometry_is_not_accepted(self):
+        prepared = prepare_spherical_matches(camera_sweep(), *_detector_and_norm('sift'))
+        _, cameras = cv2.detail_HomographyBasedEstimator().apply(prepared.features, prepared.pairwise, None)
+        for camera in cameras:
+            camera.R = np.eye(3, dtype=np.float32)
+        self.assertFalse(_alignment_quality(prepared, cameras)['valid'])
+
+    def test_exhausted_solvers_never_render_invalid_cameras(self):
+        prepared = prepare_spherical_matches(camera_sweep(), *_detector_and_norm('sift'))
+        failed = Mock()
+        failed.apply.return_value = (False, None)
+        with (
+            patch('backend.services.spherical.cv2.detail_BundleAdjusterRay', return_value=failed),
+            patch('backend.services.spherical.cv2.detail_BundleAdjusterReproj', return_value=failed),
+            self.assertRaisesRegex(StitchingError, 'could not be stabilized.*still saved on this page'),
+        ):
+            _refine_cameras(prepared)
+
+    def test_forty_distinct_photos_generate_without_dropping_views(self):
+        poses = [(index * 22.5, 0) for index in range(16)]
+        poses += [(index * 30, pitch) for pitch in (-60, 60) for index in range(12)]
+        cv2.setRNGSeed(42)
+        panorama, _, metadata = reconstruct_hybrid_panorama(
+            camera_sweep(poses=poses), fill_gaps=False,
+            capture_views=['around'] * 16 + ['top'] * 12 + ['bottom'] * 12,
+        )
+        self.assertEqual(panorama.shape, (2048, 4096, 3))
+        self.assertEqual(metadata['image_count'], 40)
+        self.assertEqual(metadata['used_image_indices'], list(range(40)))
+        self.assertEqual(metadata['excluded_image_indices'], [])
+        self.assertLess(metadata['coverage_report']['missing_ratio'], .01)
+        self.assertTrue(all(pair['alignment_matches'] <= 200 for pair in metadata['ransac_report']))
+
+    def test_blank_optional_views_do_not_block_a_real_connected_room(self):
+        images = camera_sweep()
+        blank = np.full_like(images[0], 180)
+        # Interleaved optional views exercise report index mapping as well.
+        sources = [blank, images[0], images[1], images[2], blank.copy(), images[3], images[4], images[5]]
+        views = ['top', 'around', 'around', 'around', 'bottom', 'around', 'around', 'around']
+        cv2.setRNGSeed(42)
+        analysis = analyze_image_sequence(sources, capture_views=views)
+        self.assertTrue(analysis['can_stitch'])
+        self.assertEqual(analysis['excluded_image_indices'], [0, 4])
+        self.assertEqual(analysis['used_image_indices'], [1, 2, 3, 5, 6, 7])
+        self.assertFalse(any(issue['severity'] == 'error' for issue in analysis['issues']))
+        cv2.setRNGSeed(42)
+        panorama, _, metadata = reconstruct_hybrid_panorama(sources, capture_views=views, fill_gaps=False)
+        self.assertEqual(panorama.shape, (2048, 4096, 3))
+        self.assertEqual(metadata['image_count'], 6)
+        self.assertEqual(metadata['input_image_count'], 8)
+        self.assertEqual(metadata['excluded_image_indices'], [0, 4])
+        self.assertIn('Used 6 of 8 photos', metadata['disclosure_message'])
+        self.assertLess(metadata['coverage_report']['top_coverage_ratio'], .01)
+        self.assertLess(metadata['coverage_report']['bottom_coverage_ratio'], .01)
+        self.assertTrue(all(pair['from_index'] not in {0, 4} and pair['to_index'] not in {0, 4} for pair in metadata['ransac_report']))
+
+    def test_disconnected_surrounding_photos_are_never_silently_discarded(self):
+        images = camera_sweep()
+        sources = images + [np.full_like(images[0], 180)]
+        analysis = analyze_image_sequence(sources, capture_views=['around'] * 7)
+        self.assertFalse(analysis['can_stitch'])
+        self.assertEqual(analysis['excluded_image_indices'], [])
+        with self.assertRaisesRegex(StitchingError, 'overlap'):
+            reconstruct_hybrid_panorama(sources, capture_views=['around'] * 7)
+
     def test_top_bottom_views_fill_both_poles_and_wrap_seam(self):
         cv2.setRNGSeed(42)
         images = camera_sweep(include_poles=True)
@@ -66,13 +179,13 @@ class SphericalTests(unittest.TestCase):
             'around_coverage_ratio': 1.0, 'missing_ratio': .333333,
         })
 
-    def test_invalid_capture_views_and_oversized_sets_are_rejected(self):
+    def test_invalid_capture_views_and_sets_below_minimum_are_rejected(self):
         images = [np.zeros((480, 640, 3), np.uint8)] * 6
         for views in (['around'], ['unknown'] * 6):
             with self.assertRaisesRegex(StitchingError, 'capture view'):
                 reconstruct_hybrid_panorama(images, capture_views=views)
-        with self.assertRaisesRegex(StitchingError, '6 to 24'):
-            reconstruct_hybrid_panorama(images * 5)
+        with self.assertRaisesRegex(StitchingError, 'at least 6'):
+            reconstruct_hybrid_panorama(images[:5])
 
     def test_shuffled_sweep_passes_preflight_and_reconstruction(self):
         sweep = camera_sweep()

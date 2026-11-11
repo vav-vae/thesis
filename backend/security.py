@@ -551,6 +551,7 @@ class SecurityHeadersMiddleware:
             return
 
         request_id = uuid4().hex
+        scope.setdefault("state", {})["request_id"] = request_id
         path = canonical_api_path(scope.get("path", ""))
 
         async def send_with_headers(message: Message) -> None:

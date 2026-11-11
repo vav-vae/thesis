@@ -23,6 +23,7 @@ import {
 } from "firebase/firestore";
 
 import { auth, db } from "@/lib/firebase";
+import { isPublishedTour } from "@/lib/published-tour";
 import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
 import { AMENITY_LABELS } from "@/lib/propertyAmenities";
 import PanoramaViewer from "@/components/PanoramaViewer";
@@ -191,7 +192,7 @@ export default function PropertyDetailsPage({
 
         const publishedTours = tourSnapshot.docs
           .map((item) => ({ id: item.id, ...item.data() } as RoomTour))
-          .filter((tour) => (tour.status ?? "published") === "published" && Boolean(tour.panoramaUrl));
+          .filter(isPublishedTour);
         setRoomTours(publishedTours);
         setSelectedTourId(publishedTours[0]?.id ?? "");
 

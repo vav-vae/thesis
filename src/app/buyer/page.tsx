@@ -21,6 +21,8 @@ import { useBuyerFavorites } from "@/hooks/useBuyerFavorites";
 import SafeImage from "@/components/SafeImage";
 import BuyerAccountMenu from "@/components/BuyerAccountMenu";
 import styles from "./dashboard.module.css";
+import { isPublishedTour } from "@/lib/published-tour";
+import { isBrowsableProperty } from "@/lib/property-visibility";
 
 type RecentProperty = {
   id: string;
@@ -48,10 +50,19 @@ export default function BuyerDashboard() {
   const [tourPropertyIds, setTourPropertyIds] = useState<Set<string>>(new Set());
   const [listingsLoading, setListingsLoading] = useState(true);
   const [searchExpanded, setSearchExpanded] = useState(false);
+  const [headerCompact, setHeaderCompact] = useState(false);
+  const [maxPrice, setMaxPrice] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [propertyType, setPropertyType] = useState("");
   const searchRef = useRef<HTMLDivElement>(null);
   const { favoriteIds } = useBuyerFavorites();
+
+  useEffect(() => {
+    const updateHeader = () => setHeaderCompact(window.scrollY > 80);
+    updateHeader();
+    window.addEventListener("scroll", updateHeader, { passive: true });
+    return () => window.removeEventListener("scroll", updateHeader);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser: User | null) => {
@@ -128,12 +139,11 @@ export default function BuyerDashboard() {
     let cancelled = false;
     async function loadListings() {
       try {
-        const [active, legacy, tours] = await Promise.all([
-          getDocs(query(collection(db, "properties"), where("status", "==", "active"))),
-          getDocs(query(collection(db, "properties"), where("status", "==", null))),
-          getDocs(query(collection(db, "roomTours"), where("status", "==", "published"))),
+        const [allProperties, tours] = await Promise.all([
+          getDocs(collection(db, "properties")),
+          getDocs(collection(db, "roomTours")),
         ]);
-        const listings = [...new Map([...active.docs, ...legacy.docs].map((item) => [item.id, item])).values()]
+        const listings = allProperties.docs.filter((item) => isBrowsableProperty(item.data()))
           .map((item) => ({ id: item.id, ...item.data() } as FeaturedProperty));
         const chunks = Array.from({ length: Math.ceil(listings.length / 30) }, (_, index) => listings.slice(index * 30, index * 30 + 30).map((item) => item.id));
         const covers = new Map<string, string>();
@@ -146,7 +156,7 @@ export default function BuyerDashboard() {
         }));
         if (!cancelled) {
           setFeaturedProperties(listings.map((item) => ({ ...item, image: isRemoteImageUrl(item.image) ? item.image : covers.get(item.id) })));
-          setTourPropertyIds(new Set(tours.docs.filter((item) => item.data().panoramaUrl).map((item) => String(item.data().propertyId))));
+          setTourPropertyIds(new Set(tours.docs.filter((item) => isPublishedTour(item.data())).map((item) => String(item.data().propertyId))));
         }
       } catch (error) {
         console.error("Unable to load dashboard listings:", error);
@@ -171,8 +181,9 @@ export default function BuyerDashboard() {
 
   const openSearch = () => {
     const params = new URLSearchParams();
-    if (searchTerm.trim()) params.set("q", searchTerm.trim());
+    if (searchTerm.trim()) params.set("location", searchTerm.trim());
     if (propertyType) params.set("type", propertyType);
+    if (maxPrice) params.set("maxPrice", maxPrice);
     router.push(`/buyer/properties${params.size ? `?${params}` : ""}`);
   };
 
@@ -200,26 +211,36 @@ export default function BuyerDashboard() {
 
   return (
     <div className="min-h-screen bg-[#fbfaf8] text-[#183c3e]">
-      <header className="sticky top-0 z-30 border-b border-[#ebe8e2] bg-white/95 backdrop-blur-md">
-        <div className="mx-auto flex h-[76px] max-w-[1440px] items-center justify-between gap-4 px-5 sm:px-8">
+      <div className={styles.headerSpace}>
+      <header className={`${styles.header} ${headerCompact ? styles.headerCompact : ""}`}>
+        <div className={styles.headerRow}>
           <Link href="/buyer" className="text-2xl font-bold tracking-tight text-[#076267]">LiBot</Link>
+          <nav aria-label="Discover homes" className={styles.discoveryNav}>
+            <Link href="/buyer/properties"><span aria-hidden="true">🌏</span>All homes</Link>
+            <Link href="/buyer/properties?tour=1"><span aria-hidden="true">🏡</span>Virtual tours</Link>
+            <Link href="/buyer/favorites"><span aria-hidden="true">♡</span>Favorites</Link>
+          </nav>
           <div className="flex items-center gap-2"><NotificationCenter audience="buyer" /><BuyerAccountMenu onSignOut={handleSignOut} signingOut={signingOut} photo={profilePicture} /></div>
         </div>
         <div ref={searchRef} className={`${styles.searchWrap} ${searchExpanded ? styles.searchExpanded : ""}`}>
           <div className={styles.searchBar}>
-            <button type="button" onClick={() => setSearchExpanded(true)} className={styles.searchField}><span className={styles.searchLabel}>Where</span><span className={styles.searchValue}>{searchTerm || "Search Iloilo homes"}</span></button>
+            <button type="button" onClick={() => setSearchExpanded(true)} aria-expanded={searchExpanded} aria-controls="buyer-search-panel" className={styles.searchField}><span className={styles.searchLabel}>Where</span><span className={styles.searchValue}>{searchTerm || (headerCompact ? "Anywhere" : "Search Iloilo homes")}</span></button>
             <span className={styles.searchDivider} />
             <button type="button" onClick={() => setSearchExpanded(true)} className={styles.searchField}><span className={styles.searchLabel}>Type</span><span className={styles.searchValue}>{propertyType || "Any property"}</span></button>
+            <span className={styles.searchDivider} />
+            <button type="button" onClick={() => setSearchExpanded(true)} className={styles.searchField}><span className={styles.searchLabel}>Budget</span><span className={styles.searchValue}>{maxPrice ? `Up to ₱${Number(maxPrice).toLocaleString("en-PH")}` : "Any price"}</span></button>
             <button type="button" onClick={openSearch} aria-label="Search properties" className={styles.searchButton}><Search size={19} /><span className={styles.searchButtonText}>Search</span></button>
           </div>
-          {searchExpanded && <div className={styles.searchPanel}>
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#6d7a79]" htmlFor="dashboard-search">Location or property</label>
+          {searchExpanded && <div id="buyer-search-panel" className={styles.searchPanel}>
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#6d7a79]" htmlFor="dashboard-search">Location</label>
             <input id="dashboard-search" autoFocus value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") openSearch(); }} placeholder="Try Jaro, Iloilo" className="mt-2 h-12 w-full rounded-xl border border-stone-200 px-4 text-sm outline-none focus:border-[#076267]" />
+            <label className="mt-4 block text-sm font-semibold">Maximum price<select value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-stone-200 bg-white px-3"><option value="">Any price</option><option value="3000000">₱3 million</option><option value="5000000">₱5 million</option><option value="10000000">₱10 million</option></select></label>
             <div className="mt-4 flex flex-wrap gap-2">{["", "House", "Condo", "Apartment", "Lot"].map((type) => <button key={type} type="button" onClick={() => setPropertyType(type)} className={`rounded-full border px-4 py-2 text-sm ${propertyType === type ? "border-[#076267] bg-[#e7f2ef] text-[#076267]" : "border-stone-200 text-stone-600"}`}>{type || "Any type"}</button>)}</div>
             <div className="mt-5 flex justify-between"><button type="button" onClick={() => setSearchExpanded(false)} className="flex items-center gap-1 text-sm text-stone-500"><X size={16} /> Close</button><button type="button" onClick={openSearch} className="rounded-xl bg-[#076267] px-5 py-2.5 text-sm font-semibold text-white">Show properties</button></div>
           </div>}
         </div>
       </header>
+      </div>
 
       <main className="mx-auto max-w-[1440px] px-5 pb-16 pt-9 sm:px-8">
         <div className={`${styles.intro} mb-9`}><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#087d7d]">Your home search</p><h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Find a place worth exploring, {buyerName}.</h1><p className="mt-2 text-sm text-[#637270]">Discover homes around Iloilo and step inside with a virtual tour.</p></div>
