@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   collection,
   doc,
@@ -33,6 +33,9 @@ import BuyerAccountMenu from "@/components/BuyerAccountMenu";
 import SafeImage from "@/components/SafeImage";
 import AppLogo from "@/components/AppLogo";
 import searchStyles from "./search.module.css";
+import { matchesLocation, matchesPropertySearch } from "@/lib/property-search";
+import { isPublishedTour } from "@/lib/published-tour";
+import { isBrowsableProperty } from "@/lib/property-visibility";
 
 interface Property {
   id: string;
@@ -53,8 +56,13 @@ interface Property {
 }
 
 export default function BuyerPropertiesPage() {
+  return <Suspense fallback={<main className="p-8 text-slate-600">Loading property search…</main>}><BuyerPropertiesContent /></Suspense>;
+}
+
+function BuyerPropertiesContent() {
   const router = useRouter();
-  const initialParam = (key: string) => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get(key) ?? "";
+  const searchParams = useSearchParams();
+  const initialParam = (key: string) => searchParams.get(key) ?? "";
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState(() => initialParam("q"));
@@ -88,16 +96,15 @@ export default function BuyerPropertiesPage() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       try {
-        const [activePropertySnapshot, legacyPropertySnapshot, profileSnapshot, tourSnapshot] = await Promise.all([
-          getDocs(query(collection(db, "properties"), where("status", "==", "active"))),
-          getDocs(query(collection(db, "properties"), where("status", "==", null))),
+        const [propertySnapshot, profileSnapshot, tourSnapshot] = await Promise.all([
+          getDocs(collection(db, "properties")),
           user ? getDoc(doc(db, "users", user.uid)) : Promise.resolve(null),
-          getDocs(query(collection(db, "roomTours"), where("status", "==", "published"))),
+          getDocs(collection(db, "roomTours")),
         ]);
 
         const propertyList: Property[] = [];
 
-        const propertyDocs = new Map([...activePropertySnapshot.docs, ...legacyPropertySnapshot.docs].map((item) => [item.id, item]));
+        const propertyDocs = propertySnapshot.docs.filter((item) => isBrowsableProperty(item.data()));
 
         propertyDocs.forEach((doc) => {
           const data = doc.data();
@@ -129,7 +136,7 @@ export default function BuyerPropertiesPage() {
           ...property,
           image: isRemoteImageUrl(property.image) ? property.image : imageLookup.get(property.id),
         })));
-        setTourPropertyIds(new Set(tourSnapshot.docs.filter((item) => item.data().panoramaUrl).map((item) => String(item.data().propertyId))));
+        setTourPropertyIds(new Set(tourSnapshot.docs.filter((item) => isPublishedTour(item.data())).map((item) => String(item.data().propertyId))));
         const discovery = profileSnapshot?.data()?.settings?.discovery;
         if (discovery && !window.location.search) {
           setLocationFilter(String(discovery.location ?? ""));
@@ -151,11 +158,9 @@ export default function BuyerPropertiesPage() {
   const activeFilterCount = [locationFilter, typeFilter, minPrice, maxPrice, minBeds].filter(Boolean).length + (virtualToursOnly ? 1 : 0);
   const filteredProperties = properties
     .filter((property) => {
-      const search = searchTerm.trim().toLowerCase();
-      const location = property.location?.toLowerCase() ?? "";
       const priceValue = propertyPrice(property);
-      return (!search || property.title?.toLowerCase().includes(search) || location.includes(search))
-        && (!locationFilter.trim() || location.includes(locationFilter.trim().toLowerCase()))
+      return matchesPropertySearch(property, searchTerm)
+        && matchesLocation(property.location, locationFilter)
         && (!typeFilter || property.propertyType?.toLowerCase() === typeFilter.toLowerCase())
         && (!minPrice || priceValue >= Number(minPrice))
         && (!maxPrice || priceValue <= Number(maxPrice))

@@ -2,14 +2,26 @@
 
 ## Workflow
 
-1. The broker captures eight guided landscape images from one fixed position. The API accepts 6–12 images.
-2. `POST /validate` checks orientation, resolution, sharpness, brightness, feature count, and consecutive overlap.
-3. `POST /reconstruct/hybrid` rejects sequences with blocking quality or overlap errors.
-4. ORB (or optional SIFT), BFMatcher, Lowe ratio filtering, RANSAC homography estimation, and `warpPerspective` reconstruct all supported pixels.
-5. An evidence mask follows every geometric warp. Black mask pixels have no uploaded-image support.
-6. The mosaic is fitted to a 2:1 equirectangular output without claiming that padding is real evidence.
+1. The broker captures at least six guided landscape images from one fixed position; there is no fixed photo-count cap within the byte, pixel, and processing budgets.
+2. **Finish & generate** runs local image checks, uploads the set to Cloudinary, and sends source URLs and `capture_views` directly to `/reconstruct/hybrid/remote`. That request validates overlap and reconstructs in one pass. Closing the camera to review still offers the separate preflight workflow.
+3. Validation checks image quality and the verified overlap graph. A low sharpness or exposure score is a warning when strong feature matches still support alignment. Disconnected surrounding views remain blocking errors.
+4. Optional ceiling/floor views that cannot connect to a core containing every surrounding image may be excluded when at least six connected photos remain. Their indices and missing coverage are disclosed; their pixels are never claimed as captured.
+5. SIFT (or ORB), feature matching, MAGSAC homography fitting, rotation geometry checks, camera estimation, and bundle adjustment reconstruct supported pixels onto a true 4096×2048 spherical canvas.
+6. An evidence mask follows projection. Missing ceiling/floor areas remain unsupported rather than being represented as photographed detail.
 7. `placeholder_ai_gap_fill` changes only missing-mask pixels. It currently uses deterministic OpenCV Telea inpainting and is the sole replacement point for a future AI provider.
 8. The panorama, generated-region mask, metrics, region bounds, and disclosure are returned and saved with the room tour.
+
+### Larger capture sets
+
+SIFT uses at most 4,000 features per photo and reuses a FLANN search index per destination. Keypoint coordinates are converted once per image. Native matcher containers are allocated with an empty pair mask, avoiding a duplicate matching pass. All verified links contribute to quality reports; camera refinement uses at most 200 spatially spread inliers per link to bound its residual count. Excluding disconnected optional views reuses the already verified matches.
+
+Pair acceptance checks camera-rotation compatibility across plausible focal scales. Nearly collapsed and reflected homographies are rejected even if a repeated texture supplies many apparent inliers. A physical fit with at least 15 inliers and 20% inlier support can connect a set even when the old heuristic confidence score was below 1; final fitted-camera reprojection checks still apply.
+
+The live top/bottom guide uses three targets: a 30° row connected to wall details, a 60° row overlapping that row, then 90° overhead/below. Each row retains its own heading. The old 45° jump left insufficient vertical overlap on the supplied live-capture fixture.
+
+Initial camera estimation uses the full verified inlier counts as spanning-tree weights, then restores the bounded sample counts before optimization. If ray adjustment fails, produces nonfinite parameters, or fails the image-point fit check, the processor retries pixel reprojection with fixed image centres and aspect ratio. A final bounded attempt fixes intrinsics and refines rotations. Every accepted solution must have a connected graph of geometrically consistent image links covering every retained photograph and a bounded median reprojection error. `camera_report` records the method, recovery flag, and measured pixel error. An optimizer failure does not automatically require recapturing the entire set; unrecoverable fit errors identify the photos with the largest discrepancies when available.
+
+The streamed generation response reports detail extraction, overlap checks, camera alignment, rendering, and storage. Runtime logs include request ID, photo count, elapsed time, and stage. Source and output resolution and the byte/pixel budgets remain unchanged.
 
 ## Firestore schema
 
@@ -47,13 +59,13 @@ The current application reads the top-level `roomTours` collection. The broker f
 
 ### `POST /validate`
 
-Multipart fields: repeated `files` and `algorithm`. Returns per-image issues and consecutive-pair overlap reports. This is a preflight operation and does not create output.
+Multipart fields: repeated `files` and `algorithm`. Returns per-image issues and verified overlap links across the image set. The active browser uses `/validate/remote` with owned source URLs and optional `capture_views`. Its response includes `used_image_indices` and `excluded_image_indices`.
 
 ### `POST /reconstruct/hybrid`
 
 Multipart fields:
 
-- `files`: 6–12 images in clockwise capture order
+- `files`: at least 6 overlapping images
 - `algorithm`: `orb` (default) or `sift`
 - `ransac_threshold`: 1–10 pixels, default 4
 - `fill_gaps`: boolean, default true
@@ -82,7 +94,9 @@ White pixels in `ai_mask_url` identify output pixels without source-image eviden
 
 ## Service structure
 
-- `analyze_image_sequence`: image quality and consecutive overlap validation
+- `analyze_image_sequence`: image quality and connected overlap validation
+- `prepare_spherical_matches`: SIFT/FLANN or ORB/BF matching and verified RANSAC graph
+- `reconstruct_sphere`: joint camera estimation, bundle adjustment, and spherical evidence projection
 - `_stitch_pair`: ORB/SIFT, BFMatcher, RANSAC, homography, warp, blend, and evidence-mask propagation
 - `_fit_to_equirectangular`: 2:1 output canvas normalization
 - `describe_missing_regions`: connected-component region metadata
@@ -99,4 +113,4 @@ The prototype confidence is bounded to 0–1 and calculated as `65% mean RANSAC 
 
 ## Methodology paragraph
 
-LiBot applies an evidence-first hybrid panorama reconstruction method in which six to twelve guided landscape photographs are captured sequentially from a fixed room position. Each image is assessed for orientation, resolution, sharpness, brightness, and detectable visual features, while consecutive views are evaluated for sufficient shared content. ORB keypoints and binary descriptors are matched using a brute-force matcher, after which RANSAC estimates robust homographies by excluding inconsistent correspondences. Valid images are geometrically aligned through perspective warping and blended into a common canvas while a parallel evidence mask records every pixel supported by an uploaded photograph. Missing regions are detected from this mask and may be completed only through a separately bounded inpainting stage; completed pixels remain identified through a stored mask, region metadata, and a user-facing disclosure. Reconstruction confidence combines RANSAC inlier consistency and source-image coverage, ensuring that generated completion does not increase the measured evidential reliability of the virtual tour.
+LiBot reconstructs a spherical panorama from at least six landscape photographs taken from one fixed lens position. SIFT descriptors use indexed FLANN matching; the optional ORB mode uses brute force matching. RANSAC verifies shared scene features across the image set. The connected overlap graph supports joint camera rotation estimation and bundle adjustment, followed by projection and feather blending onto a 4096×2048 equirectangular canvas. A parallel evidence mask records photographed pixels. Optional disconnected ceiling or floor views may be excluded with a disclosure; disconnected surrounding views remain errors. Missing regions may receive bounded inpainting and are identified separately in the stored mask and metadata. Reconstruction confidence combines verified inlier consistency and photographed coverage; generated pixels do not increase evidence coverage.

@@ -447,13 +447,13 @@ class ApiSecurityIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {"success": True, "analysis": analysis})
         self.assertIn("x-ratelimit-limit", response.headers)
         reader.assert_awaited_once_with(urls, TEST_USER_ID)
-        analyzer.assert_called_once_with(images, ["Remote image 1", "Remote image 2"], "sift", 5.5)
+        analyzer.assert_called_once_with(images, ["Remote image 1", "Remote image 2"], "sift", 5.5, capture_views=None)
 
     async def test_remote_hybrid_uses_strict_typed_options(self):
-        urls = [cloudinary_source_url(f"source-{index}") for index in range(1, 7)]
+        urls = [cloudinary_source_url(f"source-{index}") for index in range(1, 41)]
         images = [np.zeros((100, 120, 3), dtype=np.uint8) for _ in urls]
-        filenames = [f"Remote image {index}" for index in range(1, 7)]
-        capture_views = ['around'] * 4 + ['top', 'bottom']
+        filenames = [f"Remote image {index}" for index in range(1, 41)]
+        capture_views = ['around'] * 20 + ['top'] * 10 + ['bottom'] * 10
         reader = AsyncMock(return_value=(images, filenames))
         builder = AsyncMock(
             return_value={
@@ -491,14 +491,18 @@ class ApiSecurityIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_top_bottom_request_bounds_and_legacy_compatibility(self):
         from pydantic import ValidationError
-        urls = [cloudinary_source_url(f"source-{index}") for index in range(24)]
-        payload = main_module.RemoteHybridRequest(image_urls=urls, capture_views=['around'] * 12 + ['top'] * 6 + ['bottom'] * 6)
-        self.assertEqual(len(payload.image_urls), 24)
+        urls = [cloudinary_source_url(f"source-{index}") for index in range(40)]
+        payload = main_module.RemoteHybridRequest(image_urls=urls, capture_views=['around'] * 20 + ['top'] * 10 + ['bottom'] * 10)
+        self.assertEqual(len(payload.image_urls), 40)
+        self.assertEqual(len(main_module.RemoteValidationRequest(image_urls=urls).image_urls), 40)
+        self.assertEqual(main_module.RemoteValidationRequest(image_urls=urls, capture_views=payload.capture_views).capture_views, payload.capture_views)
+        with self.assertRaises(ValidationError):
+            main_module.RemoteValidationRequest(image_urls=urls, capture_views=['top'])
         self.assertIsNone(main_module.RemoteHybridRequest(image_urls=urls[:6]).capture_views)
         for options in (
-            {'image_urls': urls + urls[:1]},
+            {'image_urls': urls[:5]},
             {'image_urls': urls, 'capture_views': ['top']},
-            {'image_urls': urls, 'capture_views': ['unknown'] * 24},
+            {'image_urls': urls, 'capture_views': ['unknown'] * 40},
         ):
             with self.assertRaises(ValidationError):
                 main_module.RemoteHybridRequest(**options)

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from time import perf_counter
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 import cv2
 import numpy as np
 
-from .spherical import SphericalMatches, prepare_spherical_matches
+from .spherical import SphericalMatches, prepare_spherical_matches, subset_spherical_matches
 
 Algorithm = Literal["orb", "sift"]
 
@@ -41,23 +41,40 @@ def analyze_image_sequence(
     ransac_threshold: float = 4.0,
     *,
     prepared: SphericalMatches | None = None,
+    capture_views: Sequence[str] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Assess quality and connected overlap using the reconstruction matcher."""
-    if not 2 <= len(images) <= 30:
-        raise StitchingError("Upload between 2 and 30 overlapping images.")
+    if len(images) < 2:
+        raise StitchingError("Upload at least 2 overlapping images.")
 
     algorithm = algorithm.lower()  # type: ignore[assignment]
     if algorithm not in ("orb", "sift"):
         raise StitchingError("Algorithm must be either 'orb' or 'sift'.")
     if not 1.0 <= ransac_threshold <= 10.0:
         raise StitchingError("RANSAC threshold must be between 1.0 and 10.0 pixels.")
+    if capture_views is not None and (len(capture_views) != len(images) or any(view not in {"around", "top", "bottom"} for view in capture_views)):
+        raise StitchingError("Provide one valid capture view (around, top, bottom) for each image.")
 
     if prepared is None:
         detector, norm, ratio_threshold = _detector_and_norm(algorithm)
         prepared = prepare_spherical_matches(
-            images, detector, norm, ratio_threshold, ransac_threshold
+            images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress
         )
     names = list(filenames or [f"Image {index}" for index in range(1, len(images) + 1)])
+    reliable_images = {
+        index for report in prepared.reports
+        if report["good_matches"] >= 25 and report["inliers"] >= 15
+        and (report["inlier_ratio"] >= .3 or (report.get("rotation_condition", float("inf")) <= 2.5 and report["inlier_ratio"] >= .2))
+        for index in (report["from_index"], report["to_index"])
+    }
+    # A blank ceiling/floor must not invalidate an aligned surrounding room.
+    # Only optional views outside a core containing EVERY surrounding photo
+    # may be omitted. Unrelated or disconnected surrounding rooms still fail.
+    required = {index for index, view in enumerate(capture_views or []) if view == "around"}
+    core = next((set(component) for component in prepared.components if required and required.issubset(component) and len(component) >= 6), None)
+    excluded = sorted(set(range(len(images))) - core) if core is not None else []
+    excluded_set = set(excluded)
     image_results: list[dict] = []
 
     for index, image in enumerate(images):
@@ -75,21 +92,25 @@ def analyze_image_sequence(
         elif min(width, height) < 720:
             issues.append(_issue("warning", "resolution_low", "Higher resolution is recommended for a sharper tour."))
         if blur_score < 45:
-            issues.append(_issue("error", "blur_severe", "Image is severely blurred; retake it with a steady camera."))
+            issues.append(_issue("warning" if index in reliable_images else "error", "blur_possible" if index in reliable_images else "blur_severe", "Sharpness is low, but verified scene overlap allows alignment. Review detail in the preview." if index in reliable_images else "Image has low sharpness and no reliable overlap; retake it with a steady camera."))
         elif blur_score < 90:
             issues.append(_issue("warning", "blur_possible", "Image may be blurry; inspect focus before continuing."))
         if brightness < 35:
-            issues.append(_issue("error", "underexposed", "Image is too dark for reliable feature detection."))
+            issues.append(_issue("warning" if index in reliable_images else "error", "underexposed", "Image is dark; verified overlap is available, but review visible detail." if index in reliable_images else "Image is too dark for reliable feature detection."))
         elif brightness < 60:
             issues.append(_issue("warning", "dark", "Image is dark; add light or increase exposure."))
         elif brightness > 225:
-            issues.append(_issue("error", "overexposed", "Image is too bright and has lost useful detail."))
+            issues.append(_issue("warning" if index in reliable_images else "error", "overexposed", "Image is bright; verified overlap is available, but review visible detail." if index in reliable_images else "Image is too bright and has lost useful detail."))
         elif brightness > 200:
             issues.append(_issue("warning", "bright", "Image is very bright; reduce exposure if details are washed out."))
         if len(detected_keypoints) < 40:
             issues.append(_issue("error", "features_insufficient", "Too few visual features were detected for alignment."))
         elif len(detected_keypoints) < 120:
             issues.append(_issue("warning", "features_weak", "Few visual features were detected; include more textured detail."))
+
+        if index in excluded_set:
+            issues = [{**issue, "severity": "warning"} for issue in issues]
+            issues.insert(0, _issue("warning", "capture_view_unused", "This ceiling/floor photo cannot be aligned to the room and will be left out. Add an overlapping view to include this area."))
 
         image_results.append({
             "index": index,
@@ -100,6 +121,7 @@ def analyze_image_sequence(
             "brightness": round(brightness, 2),
             "keypoints": len(detected_keypoints),
             "issues": issues,
+            "used_for_reconstruction": index not in excluded_set,
         })
 
     pair_results: list[dict] = []
@@ -118,7 +140,9 @@ def analyze_image_sequence(
 
     graph_issues: list[dict] = []
     connected = len(prepared.components) == 1
-    if not connected:
+    if excluded:
+        graph_issues.append(_issue("warning", "optional_views_excluded", f"Photos {', '.join(str(index + 1) for index in excluded)} cannot be aligned to the room and will be left out. The tour can use the connected room photos; uncaptured areas remain marked as missing."))
+    elif not connected:
         groups = " / ".join(
             "[" + ", ".join(str(index + 1) for index in group) + "]"
             for group in prepared.components
@@ -141,6 +165,8 @@ def analyze_image_sequence(
         "pairs": pair_results,
         "issues": graph_issues,
         "overlap_graph": {"connected": connected, "components": prepared.components},
+        "used_image_indices": [index for index in range(len(images)) if index not in excluded_set],
+        "excluded_image_indices": excluded,
     }
 
 
@@ -150,7 +176,7 @@ def _detector_and_norm(algorithm: Algorithm):
     if algorithm == "sift":
         if not hasattr(cv2, "SIFT_create"):
             raise StitchingError("SIFT is unavailable in this OpenCV installation.")
-        return cv2.SIFT_create(nfeatures=7000), cv2.NORM_L2, 0.75
+        return cv2.SIFT_create(nfeatures=4000), cv2.NORM_L2, 0.75
     raise StitchingError("Algorithm must be either 'orb' or 'sift'.")
 
 
@@ -396,10 +422,12 @@ def reconstruct_hybrid_panorama(
     ransac_threshold: float = 4.0,
     fill_gaps: bool = True,
     capture_views: Sequence[str] | None = None,
+    *,
+    on_progress: Callable[[str], None] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """Reconstruct from real matches first, then complete only pixels without evidence."""
-    if not 6 <= len(images) <= 24:
-        raise StitchingError("Guided hybrid reconstruction requires 6 to 24 landscape images.")
+    if len(images) < 6:
+        raise StitchingError("Guided hybrid reconstruction requires at least 6 landscape images.")
     if capture_views is not None and (len(capture_views) != len(images) or any(view not in {"around", "top", "bottom"} for view in capture_views)):
         raise StitchingError("Provide one valid capture view (around, top, bottom) for each image.")
     if not 1.0 <= ransac_threshold <= 10.0:
@@ -407,10 +435,10 @@ def reconstruct_hybrid_panorama(
     started = perf_counter()
     detector, norm, ratio_threshold = _detector_and_norm(algorithm)
     prepared = prepare_spherical_matches(
-        images, detector, norm, ratio_threshold, ransac_threshold
+        images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress
     )
     analysis = analyze_image_sequence(
-        images, filenames, algorithm, ransac_threshold, prepared=prepared
+        images, filenames, algorithm, ransac_threshold, prepared=prepared, capture_views=capture_views
     )
     if not analysis["can_stitch"]:
         if analysis["issues"]:
@@ -418,11 +446,22 @@ def reconstruct_hybrid_panorama(
         raise StitchingError("Image quality or overlap validation failed. Retake the flagged images before reconstruction.")
 
     from .spherical import reconstruct_sphere
+    input_count = len(images)
+    used_indices = analysis.get("used_image_indices", list(range(input_count)))
+    excluded_indices = analysis.get("excluded_image_indices", [])
+    used_views = [capture_views[index] for index in used_indices] if capture_views is not None else None
+    if excluded_indices:
+        images = [images[index] for index in used_indices]
+        prepared = subset_spherical_matches(prepared, used_indices)
     panorama, evidence_mask, pair_reports, camera_report = reconstruct_sphere(
         images, detector, norm, ratio_threshold, ransac_threshold, prepared=prepared,
-        capture_views=capture_views,
+        capture_views=used_views,
+        on_progress=on_progress,
     )
+    pair_reports = [{**report, **{key: used_indices[report[key]] for key in ("from_index", "to_index") if key in report}} for report in pair_reports]
     if fill_gaps:
+        if on_progress:
+            on_progress("Finalizing the tour")
         final, generated_mask, completion = placeholder_ai_gap_fill(panorama, evidence_mask)
     else:
         final = panorama
@@ -444,14 +483,19 @@ def reconstruct_hybrid_panorama(
         if completion["used"] else
         "This panorama is reconstructed from uploaded-image evidence; no completion was applied. Uncaptured areas remain blank."
     )
+    if excluded_indices:
+        disclosure = f"Used {len(used_indices)} of {input_count} photos. Photos {', '.join(str(index + 1) for index in excluded_indices)} could not be aligned and were excluded; their areas are not claimed as captured. " + disclosure
     metadata = {
         "algorithm": algorithm.upper(),
         "projection": "equirectangular",
         "spherical_projection": True,
         "camera_report": camera_report,
         "coverage_report": camera_report["coverage_report"],
-        "capture_views": list(capture_views) if capture_views is not None else None,
-        "pipeline": ["ORB feature detection" if algorithm == "orb" else "SIFT feature detection", "BFMatcher", "RANSAC homography", "camera rotation estimation", "bundle adjustment", "spherical projection", "feather blending", "gap completion"],
+        "capture_views": used_views,
+        "input_image_count": input_count,
+        "used_image_indices": used_indices,
+        "excluded_image_indices": excluded_indices,
+        "pipeline": ["ORB feature detection" if algorithm == "orb" else "SIFT feature detection", "BFMatcher" if algorithm == "orb" else "FLANN indexed matching", "MAGSAC homography", "rotation geometry verification", "camera rotation estimation", "bundle adjustment", "spherical projection", "feather blending", "gap completion"],
         "image_count": len(images),
         "output_width": int(final.shape[1]),
         "output_height": int(final.shape[0]),
@@ -459,7 +503,7 @@ def reconstruct_hybrid_panorama(
         "reconstruction_confidence": round(confidence, 4),
         "evidence_coverage_ratio": round(evidence_ratio, 6),
         "average_inlier_ratio": round(average_inlier, 4),
-        "overlap_report": analysis["pairs"],
+        "overlap_report": [pair for pair in analysis["pairs"] if pair["from_index"] in used_indices and pair["to_index"] in used_indices],
         "ransac_report": pair_reports,
         "ai_completion_used": completion["used"],
         "ai_completion_method": completion["method"],

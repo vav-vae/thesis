@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import cv2
@@ -24,6 +25,29 @@ def textured_image(seed: int = 7) -> np.ndarray:
 
 
 class ImageAnalysisTests(unittest.TestCase):
+    def test_more_than_thirty_images_reach_reconstruction_without_truncation(self):
+        image = textured_image()
+        images = [image] * 32
+        views = ['around'] * 16 + ['top'] * 8 + ['bottom'] * 8
+        reports = [dict(from_index=index, to_index=index + 1, good_matches=100, inliers=90, inlier_ratio=.9) for index in range(31)]
+        prepared = SimpleNamespace(
+            features=[SimpleNamespace(keypoints=[None] * 150)] * 32,
+            components=[list(range(32))],
+            reports=reports,
+        )
+        evidence = np.full((60, 120), 255, np.uint8)
+        panorama = np.full((60, 120, 3), 100, np.uint8)
+        with (
+            patch.object(service, 'prepare_spherical_matches', return_value=prepared),
+            patch('backend.services.spherical.reconstruct_sphere', return_value=(panorama, evidence, reports, {'coverage_report': {}})) as reconstruct,
+        ):
+            _, _, metadata = service.reconstruct_hybrid_panorama(images, algorithm='orb', fill_gaps=False, capture_views=views)
+        self.assertEqual(len(reconstruct.call_args.args[0]), 32)
+        self.assertEqual(reconstruct.call_args.kwargs['capture_views'], views)
+        self.assertEqual(metadata['image_count'], 32)
+        self.assertEqual(len(metadata['capture_views']), 32)
+        self.assertEqual(metadata['reconstruction_confidence'], .935)
+
     def test_sharp_overlapping_sequence_can_stitch(self):
         first = textured_image()
         second = np.roll(first, 80, axis=1)
@@ -42,6 +66,14 @@ class ImageAnalysisTests(unittest.TestCase):
         self.assertFalse(result["can_stitch"])
         self.assertIn("blur_severe", codes)
         self.assertIn("features_insufficient", codes)
+
+    def test_soft_but_reliably_matched_phone_images_are_warnings(self):
+        first = cv2.GaussianBlur(textured_image(), (7, 7), 0)
+        second = np.roll(first, 80, axis=1)
+        result = analyze_image_sequence([first, second], algorithm='sift')
+        self.assertLess(result['images'][0]['blur_score'], 45)
+        self.assertTrue(result['can_stitch'])
+        self.assertTrue(any(issue['code'] == 'blur_possible' and issue['severity'] == 'warning' for issue in result['images'][0]['issues']))
 
     def test_unrelated_images_fail_overlap(self):
         unrelated = np.random.default_rng(99).integers(0, 256, (720, 1280, 3), dtype=np.uint8)

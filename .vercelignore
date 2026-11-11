@@ -1,5 +1,6 @@
 .git
 .vercel
+.vercel-cli-cache
 .next
 .vscode
 backend/venv
