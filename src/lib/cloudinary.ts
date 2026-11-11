@@ -1,10 +1,9 @@
 import { HttpResponseError, readJsonResponse } from "./http-response";
+import { panoramaApiFetch } from "./panorama-api";
 
 const CLOUDINARY_CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "dpnsayn8m";
-const CLOUDINARY_UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "libot_uploads";
 const CLOUDINARY_SOURCE_FOLDER = process.env.NEXT_PUBLIC_CLOUDINARY_SOURCE_FOLDER || "libot/panorama-sources";
 export const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
-const CLOUDINARY_AUTO_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
 const PANORAMA_WORKING_MAX_DIMENSION = 1600;
 
 export const isRemoteImageUrl = (value: unknown): value is string =>
@@ -12,13 +11,23 @@ export const isRemoteImageUrl = (value: unknown): value is string =>
 
 async function uploadToCloudinary(
   file: File,
-  uploadUrl: string,
-  options: { folder?: string } = {},
+  purpose: "image" | "document" | "panorama-source",
 ): Promise<string> {
+  if (!file.size || file.size > 15 * 1024 * 1024) throw new Error("Choose a file between 1 byte and 15 MB.");
+  const allowedTypes = purpose === "document"
+    ? ["image/jpeg", "image/png", "image/webp", "application/pdf"]
+    : ["image/jpeg", "image/png", "image/webp"];
+  if (!allowedTypes.includes(file.type)) throw new Error("Choose a JPG, PNG, WEBP image or a supported PDF document.");
+  const authorization = await panoramaApiFetch("/uploads/sign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ purpose }),
+  });
+  const signed = await readJsonResponse<{ cloud_name: string; resource_type: string; params: Record<string, string> }>(authorization, "Unable to authorize this upload.");
+  const uploadUrl = `https://api.cloudinary.com/v1_1/${signed.cloud_name}/${signed.resource_type}/upload`;
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-  if (options.folder) formData.append("folder", options.folder);
+  for (const [key, value] of Object.entries(signed.params)) formData.append(key, value);
 
   let response: Response;
   try {
@@ -44,10 +53,10 @@ async function uploadToCloudinary(
 }
 
 export const uploadImageToCloudinary = (file: File) =>
-  uploadToCloudinary(file, CLOUDINARY_UPLOAD_URL);
+  uploadToCloudinary(file, "image");
 
 export const uploadDocumentToCloudinary = (file: File) =>
-  uploadToCloudinary(file, CLOUDINARY_AUTO_UPLOAD_URL);
+  uploadToCloudinary(file, "document");
 
 async function ownerFolderId(userId: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(userId));
@@ -155,7 +164,7 @@ async function performPanoramaSourceUpload(
   }
   const folder = `${CLOUDINARY_SOURCE_FOLDER}/${await ownerFolderId(userId)}`;
   const preparedFile = await resizePanoramaSource(file);
-  const secureUrl = await uploadToCloudinary(preparedFile, CLOUDINARY_UPLOAD_URL, { folder });
+  const secureUrl = await uploadToCloudinary(preparedFile, "panorama-source");
   if (!isExpectedPanoramaSourceUrl(secureUrl, folder)) {
     throw new Error("Cloudinary did not place the panorama source in the protected application folder.");
   }

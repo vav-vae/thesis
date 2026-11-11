@@ -304,6 +304,7 @@ class ApiSecurityMiddleware:
     """Authenticate, throttle, and capacity-limit protected API routes."""
 
     DEFAULT_PROTECTED_POLICIES = {
+        "/uploads/sign": RateLimitPolicy("uploads", 120, 240, 300, 1024),
         "/validate": RateLimitPolicy("validate", 60, 120, 300),
         "/validate/remote": RateLimitPolicy("validate", 60, 120, 300, 64 * 1024),
         "/stitch": RateLimitPolicy("reconstruct", 4, 10, 600),
@@ -422,7 +423,7 @@ class ApiSecurityMiddleware:
             return
 
         user_id = str(claims["sub"])
-        if self.required_roles:
+        if self.required_roles and policy.name != "uploads":
             role = claims.get("role")
             roles = claims.get("roles")
             claimed_roles = {role} if isinstance(role, str) else set()
@@ -613,6 +614,7 @@ def security_settings() -> dict[str, Any]:
         "required_roles": required_roles,
         "trust_proxy_headers": trust_proxy_headers,
         "policies": {
+            "/uploads/sign": RateLimitPolicy("uploads", 120, 240, 300, 1024),
             "/validate": RateLimitPolicy(
                 "validate",
                 _positive_int("PANORAMA_VALIDATE_USER_LIMIT", 60),

@@ -85,21 +85,14 @@ folder:
 | `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | `CLOUDINARY_CLOUD_NAME` |
 | `NEXT_PUBLIC_CLOUDINARY_SOURCE_FOLDER` | `CLOUDINARY_SOURCE_FOLDER` |
 
-`NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET` selects the browser upload preset. All
-`NEXT_PUBLIC_*` values are public configuration and must never contain a
-Cloudinary API secret.
-
-The current browser flow needs the upload preset to be unsigned and to preserve
-the caller-supplied source folder in the returned, versioned `secure_url`.
-Configure this preset to:
-
-- accept image uploads only and allow only JPG/JPEG, PNG, and WEBP;
-- cap each upload at 15 MiB and constrain decoded dimensions;
-- keep unsigned overwrite disabled;
-- enable `disallow_public_id`, set `use_filename=false` and
-  `unique_filename=true`, and let Cloudinary assign a random public ID;
-- avoid unneeded incoming transformations and metadata;
-- avoid forcing a conflicting folder or public-ID prefix.
+All `NEXT_PUBLIC_*` values are public configuration and must never contain a
+Cloudinary API secret. The browser no longer uses a public unsigned preset.
+Uploads require a Firebase-authenticated signature from `/uploads/sign`.
+The backend chooses the owner folder, random public ID, allowed formats and
+timestamp, and signs them with `overwrite=false`. Generated tours use signed
+uploads too. See [signed-upload setup and rollout](signed-uploads.md) for the
+required private credentials, signed preset, server-enforced 15 MB size limit,
+and the order for disabling the old unsigned preset without breaking uploads.
 
 Cloudinary folder mode and preset precedence can change the returned delivery
 path. Test the preset with a non-production asset and confirm that its
@@ -109,20 +102,12 @@ path. Test the preset with a non-production asset and confirm that its
 https://res.cloudinary.com/<cloud>/image/upload/v<version>/<source-folder>/<uid-hash>/<generated-id>.<jpg|jpeg|png|webp>
 ```
 
-The browser rejects any upload response outside that shape, and the backend
-independently applies the same check. Cloudinary documents the relevant
-[unsigned-upload restrictions](https://cloudinary.com/documentation/image_upload_api_reference#unsigned_upload_parameters)
-and [upload-preset precedence and safeguards](https://cloudinary.com/documentation/upload_presets#signed_and_unsigned_upload_preset_security).
-
-An unsigned preset is a transitional control: its name is visible to every
-browser and folder naming is not cryptographic ownership proof. The stronger
-production design is an authenticated backend endpoint that issues a
-short-lived Cloudinary upload signature constrained to a server-chosen object
-ID, folder, type, size policy, and timestamp. The browser can still upload
-bytes directly, while the backend verifies the signed upload response and
-stores the object ID against the Firebase UID. Keep `CLOUDINARY_API_SECRET`
-exclusively on the backend. Cloudinary describes this pattern in its
-[client-side signed-upload guidance](https://cloudinary.com/documentation/client_side_uploading#cors_origins_and_signing_for_direct_browser_uploads).
+The browser rejects panorama-source responses outside that shape, and the
+backend independently applies the same URL check before downloading sources.
+This does not verify Cloudinary's response signature or maintain a database
+asset-to-owner ledger. Keep `CLOUDINARY_API_SECRET` exclusively on the backend.
+Cloudinary describes request signing in its
+[authentication-signature guidance](https://cloudinary.com/documentation/authentication_signatures).
 
 ## Required production controls
 
@@ -145,10 +130,10 @@ They are not a viable fallback through a standard Vercel Function for normal
 6–12-image panorama batches. See [Vercel Functions
 limits](https://vercel.com/docs/functions/limitations#request-body-size).
 
-Monitor Cloudinary usage and storage growth, alert on spikes, and replace a
-leaked or abused unsigned preset. Use a separate, independently constrained
-preset for government-ID or license uploads; panorama-source settings should
-not silently broaden document-upload permissions.
+Monitor Cloudinary usage and storage growth, alert on spikes, and disable the
+old unsigned preset after the signed deployment is verified. Image signatures
+exclude PDF even though document signatures permit it. Signed upload
+authorization does not make document delivery URLs private.
 
 For stronger bot and scripted-client resistance, enable Firebase App Check with
 reCAPTCHA Enterprise and require `X-Firebase-AppCheck` on the panorama API.

@@ -29,8 +29,10 @@ from PIL import Image, UnidentifiedImageError
 from PIL.Image import DecompressionBombError, DecompressionBombWarning
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 try:
+    from .cloudinary_uploads import signed_upload
     from .notifications import FirestoreSubscriptionRepository, PushSubscriptionRequest
 except ImportError:
+    from cloudinary_uploads import signed_upload
     from notifications import FirestoreSubscriptionRepository, PushSubscriptionRequest
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -81,7 +83,6 @@ IMAGE_EXTENSION_FORMATS = {
     "webp": "WEBP",
 }
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "dpnsayn8m")
-CLOUDINARY_UPLOAD_PRESET = os.getenv("CLOUDINARY_UPLOAD_PRESET", "libot_uploads")
 CLOUDINARY_SOURCE_FOLDER = os.getenv(
     "CLOUDINARY_SOURCE_FOLDER", "libot/panorama-sources"
 ).strip("/")
@@ -579,14 +580,32 @@ def validate_ransac_threshold(value: float) -> float:
     return value
 
 
+class UploadSignatureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    purpose: Literal["image", "document", "panorama-source"]
+
+
+@app.post("/uploads/sign")
+async def sign_cloudinary_upload(request: Request, payload: UploadSignatureRequest):
+    user_id = str(request.state.firebase_user["sub"])
+    owner = cloudinary_owner_folder_id(user_id)
+    folder = f"{CLOUDINARY_SOURCE_FOLDER}/{owner}" if payload.purpose == "panorama-source" else f"libot/{payload.purpose}s/{owner}"
+    return {
+        "cloud_name": CLOUDINARY_CLOUD_NAME,
+        "resource_type": "auto" if payload.purpose == "document" else "image",
+        "params": signed_upload(folder, document=payload.purpose == "document"),
+    }
+
+
 async def upload_generated_image(contents: bytes, filename: str, content_type: str) -> str:
     """Persist a generated tour asset outside the serverless filesystem."""
     upload_url = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/image/upload"
+    params = signed_upload("libot/virtual-tours")
     try:
         async with httpx.AsyncClient(timeout=90) as client:
             response = await client.post(
                 upload_url,
-                data={"upload_preset": CLOUDINARY_UPLOAD_PRESET, "folder": "libot/virtual-tours"},
+                data=params,
                 files={"file": (filename, contents, content_type)},
             )
             response.raise_for_status()
