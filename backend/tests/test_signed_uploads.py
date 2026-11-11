@@ -35,6 +35,11 @@ class SigningTests(unittest.TestCase):
 
 
 class SigningApiTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        account = patch("backend.authorization.read_account", new=AsyncMock(return_value={"role": "broker", "accountStatus": "active"}))
+        account.start()
+        self.addCleanup(account.stop)
+
     async def request(self, body, *, authenticated=True):
         headers = {"Authorization": "Bearer test"} if authenticated else {}
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
