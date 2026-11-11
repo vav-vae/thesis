@@ -256,12 +256,6 @@ function RegisterForm() {
     try {
       setLoading(true);
 
-      const [profilePhotoUrl, governmentIdUrl, prcLicenseFileUrl] = await Promise.all([
-        profilePhoto ? uploadImageToCloudinary(profilePhoto) : Promise.resolve(null),
-        governmentId ? uploadDocumentToCloudinary(governmentId) : Promise.resolve(null),
-        prcLicenseFile ? uploadDocumentToCloudinary(prcLicenseFile) : Promise.resolve(null),
-      ]);
-
       let user = auth.currentUser;
       const canResumeFailedRegistration =
         user?.email?.toLowerCase() === email.trim().toLowerCase()
@@ -275,6 +269,12 @@ function RegisterForm() {
       if (!user) {
         throw new Error("Unable to create the account. Please try again.");
       }
+
+      const [profilePhotoUrl, governmentIdUrl, prcLicenseFileUrl] = await Promise.all([
+        profilePhoto ? uploadImageToCloudinary(profilePhoto) : Promise.resolve(null),
+        governmentId ? uploadDocumentToCloudinary(governmentId) : Promise.resolve(null),
+        prcLicenseFile ? uploadDocumentToCloudinary(prcLicenseFile) : Promise.resolve(null),
+      ]);
 
       await setDoc(
         doc(db, "users", user.uid),
