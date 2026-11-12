@@ -26,6 +26,7 @@ import PanoramaViewer from "@/components/PanoramaViewer";
 import PhoneCameraCapture from "@/components/PhoneCameraCapture";
 import CapturedPhotoPreview, { LocalCaptureImage } from "@/components/CapturedPhotoPreview";
 import { auth, db } from "@/lib/firebase";
+import { useTourGenerationJob } from "@/hooks/useTourGenerationJob";
 import { recordTourLog } from "@/lib/tour-logs";
 import { HttpResponseError, readJsonResponse } from "@/lib/http-response";
 import { formatCaptureDiagnostic, sanitizeDiagnosticText, type CaptureDiagnosticContext } from "@/lib/capture-diagnostics";
@@ -40,7 +41,8 @@ import {
 import {
   panoramaApiError,
   panoramaApiFetch,
-  reconstructHybridPanorama,
+  tourGenerationResult,
+  type TourGenerationJob,
   PANORAMA_API_URL,
   type HybridMetadata,
 } from "@/lib/panorama-api";
@@ -106,8 +108,10 @@ export default function CreateVirtualTourPage() {
   const [panorama, setPanorama] = useState("");
   const [aiMaskUrl, setAiMaskUrl] = useState("");
   const [metrics, setMetrics] = useState<StitchMetrics | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [generationStage, setGenerationStage] = useState("");
+  const tourJob = useTourGenerationJob(brokerId);
+  const generating = tourJob.active;
+  const [restoredInput, setRestoredInput] = useState<TourGenerationJob["input"] | null>(null);
+  const generationStage = tourJob.connection || tourJob.job?.stage || "Starting background job";
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState(false);
   const [error, setError] = useState("");
@@ -130,6 +134,25 @@ export default function CreateVirtualTourPage() {
   const devLogIdRef = useRef(0);
   const logListRef = useRef<HTMLDivElement>(null);
   const logPropertyRef = useRef("");
+
+  useEffect(() => {
+    const job = tourJob.job;
+    if (job?.status !== "completed") return;
+    let disposed = false;
+    void Promise.resolve().then(() => {
+      if (disposed) return;
+      const result = tourGenerationResult(job);
+      setSelectedProperty(job.input.property_id);
+      setRoomType(job.input.room_type);
+      setRansacThreshold(job.input.ransac_threshold);
+      setRestoredInput(job.input);
+      setPanorama(result.panoramaUrl);
+      setAiMaskUrl(result.aiMaskUrl);
+      setMetrics(result.metadata);
+      setPublished(false);
+    });
+    return () => { disposed = true; };
+  }, [tourJob.job]);
 
   useEffect(() => { logPropertyRef.current = selectedProperty; }, [selectedProperty]);
 
@@ -199,8 +222,8 @@ export default function CreateVirtualTourPage() {
   const blockingIssues = allIssues.filter((issue) => issue.severity === "error").length;
   const sourcesMatchFiles = uploadedSources.length === files.length
     && uploadedSources.every((source, index) => source.file === files[index]);
-  const sourceImageUrls = uploadedSources.map((source) => source.url);
-  const sourceCaptureViews = files.map((file) => captureViews.get(file) ?? "around");
+  const sourceImageUrls = restoredInput?.image_urls ?? uploadedSources.map((source) => source.url);
+  const sourceCaptureViews = restoredInput?.capture_views ?? files.map((file) => captureViews.get(file) ?? "around");
   const previewIndex = previewedFile ? files.indexOf(previewedFile) : -1;
   const previewValidation = validations.find((item) => item.file === previewedFile);
   const readyToGenerate = Boolean(selectedProperty && roomType.trim() && files.length >= MIN_CAPTURE_IMAGES && sourcesMatchFiles && preflightPassed && !validating && !blockingIssues);
@@ -345,11 +368,12 @@ export default function CreateVirtualTourPage() {
     for (const file of uploadCacheRef.current.keys()) if (!selectedSet.has(file)) uploadCacheRef.current.delete(file);
     setError("");
     setValidationFailed(false);
+    setRestoredInput(null);
     setPanorama("");
     setAiMaskUrl("");
     setMetrics(null);
     setPublished(false);
-    setGenerating(false);
+    tourJob.clear();
     setPreflightPassed(false);
     setPairValidations([]);
     setAnalysisIssues([]);
@@ -376,11 +400,12 @@ export default function CreateVirtualTourPage() {
     setPairValidations([]);
     setAnalysisIssues([]);
     setValidating(false);
+    setRestoredInput(null);
     setPanorama("");
     setAiMaskUrl("");
     setMetrics(null);
     setPublished(false);
-    setGenerating(false);
+    tourJob.clear();
     setError("");
   };
 
@@ -418,46 +443,17 @@ export default function CreateVirtualTourPage() {
   };
 
   const runReconstruction = async (sources: UploadedSource[], selected: File[], revision: number) => {
-    if (generatingRef.current || revision !== workflowRevisionRef.current) return;
-    let lastStage = "Connecting to the panorama processor";
-    addDevLog("info", `Tour generation started with ${selected.length} images (algorithm: ${algorithm}, RANSAC: ${ransacThreshold}).`);
-    const persistedSourceUrls = sources.map((source) => source.url);
+    if (generatingRef.current || generating || revision !== workflowRevisionRef.current) return;
     generatingRef.current = true;
-    setGenerating(true);
-    setGenerationStage("Connecting to the panorama processor");
     setError("");
     setPublished(false);
+    addDevLog("info", `Submitting background tour job with ${selected.length} photos.`);
     try {
-      const result = await reconstructHybridPanorama(persistedSourceUrls, {
-        algorithm, ransacThreshold, fillGaps: true, captureViews: selected.map((file) => captureViewsRef.current.get(file) ?? "around"),
-        onProgress: (stage) => {
-          lastStage = stage;
-          if (revision === workflowRevisionRef.current) setGenerationStage(stage);
-        },
-      });
-      if (revision !== workflowRevisionRef.current) return;
-      setPanorama(result.panoramaUrl);
-      setAiMaskUrl(result.aiMaskUrl);
-      setMetrics(result.metadata);
-      addDevLog("info", `Tour generation completed (${result.metadata.output_width}×${result.metadata.output_height}).`);
-    } catch (generateError) {
-      if (revision === workflowRevisionRef.current) {
-        reportError(`Tour generation (${lastStage})`, generateError, { endpoint: `${PANORAMA_API_URL}/reconstruct/hybrid/remote`, photoCount: selected.length, algorithm, ransacThreshold });
-        const detail = generateError instanceof Error ? generateError.message : "Could not connect to the panorama processor.";
-        const networkFailure = /^(load failed|failed to fetch|network ?error|network request failed)$/i.test(detail);
-        setError(networkFailure
-          ? "The panorama processor connection ended before returning a result. Your photos are still on this page; try Generate tour again without recapturing."
-          : detail);
-      }
-    } finally {
-      generatingRef.current = false;
-      if (revision === workflowRevisionRef.current) {
-        setGenerating(false);
-        setGenerationStage("");
-      }
-    }
+      await tourJob.start({ image_urls: sources.map((source) => source.url), algorithm,
+        ransac_threshold: ransacThreshold, capture_views: selected.map((file) => captureViewsRef.current.get(file) ?? "around"),
+        property_id: selectedProperty, room_type: roomType.trim() });
+    } finally { generatingRef.current = false; }
   };
-
   const generatePanorama = async () => {
     if (!readyToGenerate || !sourcesMatchFiles || generatingRef.current) {
       setError("Complete the room details and resolve critical image or overlap problems before generating the tour.");
@@ -480,7 +476,7 @@ export default function CreateVirtualTourPage() {
 
   const publishRoomTour = async () => {
     if (!panorama || !selectedProperty || !roomType.trim() || !brokerId || publishingRef.current) return;
-    if (!sourcesMatchFiles) {
+    if (!restoredInput && !sourcesMatchFiles) {
       setError("The source-image set changed. Validate the current captures before publishing.");
       return;
     }
@@ -517,8 +513,8 @@ export default function CreateVirtualTourPage() {
         projection: metrics?.projection ?? "stitched-panorama",
         algorithm: algorithm.toUpperCase(),
         metrics,
-        sourceImageCount: files.length,
-        usedSourceImageCount: metrics?.image_count ?? files.length,
+        sourceImageCount: sourceImageUrls.length,
+        usedSourceImageCount: metrics?.image_count ?? sourceImageUrls.length,
         excludedSourceImageIndices: metrics?.excluded_image_indices ?? [],
         sourceImageUrls: persistedSourceUrls,
         sourceImages: persistedSourceUrls.map((url, index) => ({
@@ -532,7 +528,7 @@ export default function CreateVirtualTourPage() {
         captureMode: "guided_hybrid",
         captureMethod: "guided-spherical-around-top-bottom",
         captureViews: sourceCaptureViews,
-        captureOrder: files.map((_, index) => `image-${index + 1}`),
+        captureOrder: sourceImageUrls.map((_, index) => `image-${index + 1}`),
         overlapTarget: "30-50%",
         orientation: "landscape",
         ransacThreshold,
@@ -557,6 +553,7 @@ export default function CreateVirtualTourPage() {
         await addDoc(collection(db, "roomTours"), { ...tourData, createdAt: serverTimestamp() });
       }
       setPublished(true);
+      tourJob.clear();
       addDevLog("info", "Room tour published successfully.");
     } catch (publishError) {
       console.error("Unable to publish room tour:", publishError);
@@ -569,6 +566,7 @@ export default function CreateVirtualTourPage() {
   };
 
   const reset = () => {
+    setRestoredInput(null);
     workflowRevisionRef.current += 1;
     thresholdValidationPendingRef.current = false;
     filesRef.current = [];
@@ -578,7 +576,7 @@ export default function CreateVirtualTourPage() {
     captureSessionDirtyRef.current = false;
     captureViewsRef.current = new Map();
     setCaptureViews(new Map()); setCaptureView("around");
-    setFiles([]); setUploadedSources([]); setValidations([]); setPairValidations([]); setAnalysisIssues([]); setPreflightPassed(false); setPanorama(""); setAiMaskUrl(""); setMetrics(null); setPublished(false); setError(""); setRoomType(""); setValidating(false); setGenerating(false);
+    setFiles([]); setUploadedSources([]); setValidations([]); setPairValidations([]); setAnalysisIssues([]); setPreflightPassed(false); setPanorama(""); setAiMaskUrl(""); setMetrics(null); setPublished(false); setError(""); setRoomType(""); setValidating(false); tourJob.clear();
   };
 
   return (
@@ -603,15 +601,19 @@ export default function CreateVirtualTourPage() {
         </ol>
 
         {error && <div role="alert" className="mb-6 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AlertCircle className="mt-0.5 shrink-0" size={19} /><div><p className="font-semibold">Action needed</p><p className="mt-1">{error}</p>{validationFailed && files.length >= 2 && !validating && <button type="button" onClick={() => void selectFiles(filesRef.current)} className="mt-3 rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100">Retry photo upload and check</button>}</div></div>}
-        {generating && <div role="status" className="mb-6 flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800"><LoaderCircle className="shrink-0 animate-spin" size={19} /><p>{generationStage}… Keep this page open while the tour is generated.</p></div>}
+        {tourJob.saved && <div className="mb-6 space-y-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          <div role="status" className="flex items-start gap-3">{generating && <LoaderCircle className="shrink-0 animate-spin" size={19} />}<div><p className="font-semibold">{generating ? generationStage : tourJob.job?.status === "completed" ? "Saved tour ready to review" : "Saved capture job"}</p><p className="mt-1">Your photos and generation job are saved. If the connection drops or you leave this page, return here with the same broker account and device to resume.</p><p className="mt-2 break-all font-mono text-xs">Job: {tourJob.saved.id}{tourJob.job ? ` · Processing time: ${(tourJob.job.elapsedMs / 1000).toFixed(1)}s` : ""}</p></div></div>
+          {tourJob.error && <p role="alert" className="text-red-800">{tourJob.error}</p>}
+          {!generating && tourJob.job?.status !== "completed" && <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void tourJob.resume()} className="rounded-lg border bg-white px-3 py-2 font-semibold">Check saved job</button>{tourJob.job?.status === "failed" && <button type="button" onClick={() => void tourJob.retry()} className="rounded-lg bg-blue-700 px-3 py-2 font-semibold text-white">Retry saved photos</button>}</div>}
+        </div>}
         {published && <div className="mb-6 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-800"><CheckCircle2 className="mt-0.5 shrink-0" /><div><p className="font-semibold">Virtual tour published</p><p className="mt-1 text-sm">Buyers can now explore this room from the property details page.</p></div></div>}
 
         <div className="grid gap-7">
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 p-6 sm:p-8"><p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Step 1</p><h2 className="mt-2 text-xl font-semibold">Choose the property and room</h2><p className="mt-2 text-sm leading-6 text-slate-500">Each panorama is published as one room inside a property tour.</p></div>
             <div className="grid gap-5 p-6 sm:grid-cols-2 sm:p-8">
-              <label className="text-sm font-semibold text-slate-700">Property<select value={selectedProperty} onChange={(event) => { setSelectedProperty(event.target.value); setPublished(false); }} disabled={propertiesLoading} className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-normal outline-none focus:border-blue-400"><option value="">{propertiesLoading ? "Loading properties…" : "Select a property"}</option>{properties.map((property) => <option key={property.id} value={property.id}>{property.title || "Untitled property"}</option>)}</select></label>
-              <label className="text-sm font-semibold text-slate-700">Room or area<input value={roomType} onChange={(event) => { setRoomType(event.target.value); setPublished(false); }} placeholder="e.g. Living room" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 font-normal outline-none placeholder:text-slate-400 focus:border-blue-400" /></label>
+              <label className="text-sm font-semibold text-slate-700">Property<select value={selectedProperty} onChange={(event) => { setSelectedProperty(event.target.value); setPublished(false); }} disabled={propertiesLoading || generating || publishing} className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 font-normal outline-none focus:border-blue-400"><option value="">{propertiesLoading ? "Loading properties…" : "Select a property"}</option>{properties.map((property) => <option key={property.id} value={property.id}>{property.title || "Untitled property"}</option>)}</select></label>
+              <label className="text-sm font-semibold text-slate-700">Room or area<input value={roomType} disabled={generating || publishing} onChange={(event) => { setRoomType(event.target.value); setPublished(false); }} placeholder="e.g. Living room" className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4 font-normal outline-none placeholder:text-slate-400 focus:border-blue-400" /></label>
               {roomType.trim() && <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm sm:col-span-2"><div><span className="font-semibold text-slate-900">{roomType.trim()}</span><span className="ml-3 text-slate-600">{publishing ? "Publishing" : published ? "Published" : generating ? "Stitching" : validating && /upload/i.test(validationStage) ? "Uploading" : validating ? "Checking photos" : panorama ? "Ready to preview" : error && files.length ? "Needs attention" : files.length ? "Photos added" : "Waiting for photos"}</span>{error && files.length > 0 && <p className="mt-1 text-xs text-red-700">This room needs attention: {error}</p>}</div>{error && files.length > 0 && !generating && !validating && <button type="button" onClick={() => void (validationFailed ? selectFiles(filesRef.current) : readyToGenerate ? generatePanorama() : selectFiles(filesRef.current))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100">Retry this room</button>}</div>}
             </div>
 
@@ -647,7 +649,7 @@ export default function CreateVirtualTourPage() {
               })}</div></div>}
             </div>
 
-            <div className="p-6 sm:p-8"><div className="flex flex-col gap-4 sm:flex-row sm:items-end"><div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"><p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Feature detector</p><p className="mt-1 font-semibold">SIFT — stronger matching</p></div><label className="text-sm font-semibold text-slate-700">RANSAC threshold<input type="number" min="1" max="10" step="0.5" value={ransacThreshold} onChange={(event) => changeRansacThreshold(event.target.value)} onBlur={() => { if (thresholdValidationPendingRef.current && filesRef.current.length) void selectFiles(filesRef.current, algorithm, ransacThreshold); }} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 font-normal outline-none sm:w-40" /></label><button type="button" onClick={() => void generatePanorama()} disabled={!readyToGenerate || generating} className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40 sm:ml-auto">{generating ? <LoaderCircle className="animate-spin" size={18} /> : <Images size={18} />}{generating ? "Reconstructing room…" : "Generate virtual tour"}</button></div>{files.length > 0 && <p className={`mt-4 text-xs ${readyToGenerate ? "text-emerald-700" : "text-slate-500"}`}>{readyToGenerate ? `${files.length} photos ready to generate.` : blockingIssues > 0 ? `Review ${blockingIssues} photo issue${blockingIssues === 1 ? "" : "s"} before generating.` : files.length < MIN_CAPTURE_IMAGES ? `${files.length} of ${MIN_CAPTURE_IMAGES} photos added.` : validating ? "Checking photos…" : "Complete photo checks to generate."}</p>}</div>
+            <div className="p-6 sm:p-8"><div className="flex flex-col gap-4 sm:flex-row sm:items-end"><div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"><p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Feature detector</p><p className="mt-1 font-semibold">SIFT — stronger matching</p></div><label className="text-sm font-semibold text-slate-700">RANSAC threshold<input type="number" min="1" max="10" step="0.5" value={ransacThreshold} disabled={generating || publishing} onChange={(event) => changeRansacThreshold(event.target.value)} onBlur={() => { if (thresholdValidationPendingRef.current && filesRef.current.length) void selectFiles(filesRef.current, algorithm, ransacThreshold); }} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 font-normal outline-none sm:w-40" /></label><button type="button" onClick={() => void generatePanorama()} disabled={!readyToGenerate || generating} className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40 sm:ml-auto">{generating ? <LoaderCircle className="animate-spin" size={18} /> : <Images size={18} />}{generating ? "Reconstructing room…" : "Generate virtual tour"}</button></div>{files.length > 0 && <p className={`mt-4 text-xs ${readyToGenerate ? "text-emerald-700" : "text-slate-500"}`}>{readyToGenerate ? `${files.length} photos ready to generate.` : blockingIssues > 0 ? `Review ${blockingIssues} photo issue${blockingIssues === 1 ? "" : "s"} before generating.` : files.length < MIN_CAPTURE_IMAGES ? `${files.length} of ${MIN_CAPTURE_IMAGES} photos added.` : validating ? "Checking photos…" : "Complete photo checks to generate."}</p>}</div>
           </section>
 
         </div>
@@ -655,7 +657,7 @@ export default function CreateVirtualTourPage() {
         <section id="generated-tour-preview" className="mt-8 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-3 border-b border-slate-200 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Step 3</p><h2 className="mt-2 text-xl font-semibold">Review the reconstructed room</h2></div>{quality && <span className={`w-fit rounded-full px-3 py-1.5 text-xs font-semibold ${quality.style}`}>{quality.label}</span>}</div>
           {metrics?.coverage_report && <CaptureCoverage report={metrics.coverage_report} />}
-          <div className="p-4 sm:p-8">{panorama ? <><PanoramaViewer panorama={panorama} caption={`${roomType.trim()} virtual tour`} />{metrics && <><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Confidence" value={`${((metrics.reconstruction_confidence ?? 0) * 100).toFixed(1)}%`} /><Metric label="Evidence coverage" value={`${((metrics.evidence_coverage_ratio ?? 0) * 100).toFixed(1)}%`} /><Metric label="Mean inliers" value={`${((metrics.average_inlier_ratio ?? 0) * 100).toFixed(1)}%`} /><Metric label="AI-filled area" value={`${((metrics.ai_filled_ratio ?? 0) * 100).toFixed(1)}%`} /></div><div className={`mt-4 flex gap-3 rounded-2xl border p-4 text-sm ${metrics.ai_completion_used ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}><Info className="mt-0.5 shrink-0" size={19} /><div><p className="font-semibold">Reconstruction disclosure</p><p className="mt-1 leading-6">{metrics.disclosure_message}</p>{metrics.ai_completion_used && <a href={aiMaskUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-semibold underline">View generated-region mask</a>}</div></div></>}<div className="mt-6 flex flex-col gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:justify-between"><button onClick={() => { setPanorama(""); setAiMaskUrl(""); setMetrics(null); setPublished(false); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RotateCcw size={17} />Recapture or regenerate</button><button onClick={() => void publishRoomTour()} disabled={publishing || published} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{publishing ? <LoaderCircle className="animate-spin" size={18} /> : published ? <CheckCircle2 size={18} /> : <Eye size={18} />}{publishing ? "Publishing…" : published ? "Published" : "Publish room tour"}</button></div></> : <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm"><ImageIcon size={27} /></span><p className="mt-4 font-semibold">Your immersive preview will appear here</p><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Complete the room details, add overlapping images, and generate the tour.</p></div>}</div>
+          <div className="p-4 sm:p-8">{panorama ? <><PanoramaViewer panorama={panorama} caption={`${roomType.trim()} virtual tour`} />{metrics && <><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Confidence" value={`${((metrics.reconstruction_confidence ?? 0) * 100).toFixed(1)}%`} /><Metric label="Evidence coverage" value={`${((metrics.evidence_coverage_ratio ?? 0) * 100).toFixed(1)}%`} /><Metric label="Mean inliers" value={`${((metrics.average_inlier_ratio ?? 0) * 100).toFixed(1)}%`} /><Metric label="AI-filled area" value={`${((metrics.ai_filled_ratio ?? 0) * 100).toFixed(1)}%`} /></div><div className={`mt-4 flex gap-3 rounded-2xl border p-4 text-sm ${metrics.ai_completion_used ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}><Info className="mt-0.5 shrink-0" size={19} /><div><p className="font-semibold">Reconstruction disclosure</p><p className="mt-1 leading-6">{metrics.disclosure_message}</p>{metrics.ai_completion_used && <a href={aiMaskUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-semibold underline">View generated-region mask</a>}</div></div></>}<div className="mt-6 flex flex-col gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:justify-between"><button onClick={() => { tourJob.clear(); setRestoredInput(null); setPanorama(""); setAiMaskUrl(""); setMetrics(null); setPublished(false); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RotateCcw size={17} />Recapture or regenerate</button><button onClick={() => void publishRoomTour()} disabled={publishing || published} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{publishing ? <LoaderCircle className="animate-spin" size={18} /> : published ? <CheckCircle2 size={18} /> : <Eye size={18} />}{publishing ? "Publishing…" : published ? "Published" : "Publish room tour"}</button></div></> : <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm"><ImageIcon size={27} /></span><p className="mt-4 font-semibold">Your immersive preview will appear here</p><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Complete the room details, add overlapping images, and generate the tour.</p></div>}</div>
         </section>
 
         {published && <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-end"><Link href="/broker/properties" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700">Manage properties<ChevronRight size={17} /></Link><button onClick={reset} className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white">Create another room tour<ChevronRight size={17} /></button></div>}

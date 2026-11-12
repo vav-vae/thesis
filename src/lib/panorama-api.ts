@@ -2,6 +2,7 @@ import { auth } from "@/lib/firebase";
 import { HttpResponseError, readJsonResponse } from "./http-response";
 import { readProgressStream } from "./progress-stream";
 import type { CaptureView } from "./capture-guide";
+import { pollPanoramaJob, type PanoramaJob } from "./panorama-job-poll";
 
 export type QualityIssue = {
   severity: "warning" | "error";
@@ -73,6 +74,33 @@ export type HybridReconstruction = {
   aiMaskUrl: string;
   metadata: HybridMetadata;
 };
+
+type HybridJobResult = { success: boolean; panorama_url: string; ai_mask_url: string; metadata: HybridMetadata };
+export type TourGenerationJob = PanoramaJob<HybridJobResult>;
+
+export async function startTourGenerationJob(id: string, input: TourGenerationJob["input"], signal: AbortSignal): Promise<TourGenerationJob> {
+  // Ensure the in-memory worker token covers the full processing window.
+  await auth.currentUser?.getIdToken(true);
+  const response = await panoramaApiFetch(`/reconstruct/jobs/${encodeURIComponent(id)}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, fill_gaps: true }), signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
+  });
+  return readJsonResponse<TourGenerationJob>(response, "The generation job could not be submitted.");
+}
+
+export async function readTourGenerationJob(id: string, signal: AbortSignal): Promise<TourGenerationJob> {
+  const response = await panoramaApiFetch(`/reconstruct/jobs/${encodeURIComponent(id)}`, { method: "GET", signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
+  return readJsonResponse<TourGenerationJob>(response, "The saved generation job could not be read.");
+}
+
+export async function waitForTourGenerationJob(id: string, signal: AbortSignal, onUpdate: (job: TourGenerationJob) => void, onReconnect: () => void) {
+  return pollPanoramaJob(id, () => readTourGenerationJob(id, signal), { signal, onUpdate, onReconnect });
+}
+
+export function tourGenerationResult(job: TourGenerationJob): HybridReconstruction {
+  if (!job.result?.success) throw new Error("The saved panorama result is incomplete.");
+  return { panoramaUrl: resolveAssetUrl(job.result.panorama_url), aiMaskUrl: resolveAssetUrl(job.result.ai_mask_url), metadata: job.result.metadata };
+}
 
 export const PANORAMA_API_URL = process.env.NEXT_PUBLIC_PANORAMA_API_URL
   || (process.env.NODE_ENV === "production" ? "/api/backend" : "http://127.0.0.1:8000");

@@ -19,6 +19,14 @@ class AuthorizationTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.request(path)
                 self.assertEqual(response.status_code, 403, path)
 
+    async def test_buyer_cannot_create_or_read_panorama_jobs(self):
+        with patch("backend.security.FirebaseTokenVerifier.verify", new=AsyncMock(return_value={"sub": "job-access-test"})), patch("backend.authorization.read_account", new=AsyncMock(return_value={"role": "buyer"})):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=("127.0.0.7", 12000)), base_url="http://test") as client:
+                response = await client.post("/reconstruct/jobs/00000000-0000-4000-8000-000000000000", headers={"Authorization": "Bearer test"}, json={})
+                self.assertEqual(response.status_code, 403)
+                response = await client.get("/reconstruct/jobs/00000000-0000-4000-8000-000000000000", headers={"Authorization": "Bearer test"})
+            self.assertEqual(response.status_code, 403)
+
     async def test_inactive_broker_and_missing_profile_are_denied(self):
         for account in [{"role": "broker", "accountStatus": "inactive"}, {}]:
             with patch("backend.security.FirebaseTokenVerifier.verify", new=AsyncMock(return_value={"sub": "role-test"})), patch("backend.authorization.read_account", new=AsyncMock(return_value=account)):

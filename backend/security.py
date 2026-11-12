@@ -350,6 +350,9 @@ class ApiSecurityMiddleware:
 
         path = canonical_api_path(scope.get("path", ""))
         policy = self.policies.get(path)
+        if path.startswith("/reconstruct/jobs/"):
+            policy = (self.policies.get("/reconstruct/hybrid/remote") if scope["method"] == "POST"
+                      else RateLimitPolicy("job-status", 180, 360, 300, 1024))
         if policy is None and path.startswith("/notifications/subscriptions/"):
             policy = self.policies.get("/notifications/subscriptions")
         if policy is None:

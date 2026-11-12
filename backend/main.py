@@ -15,12 +15,12 @@ from io import BytesIO
 from pathlib import Path
 from typing import Callable, List, Literal
 from urllib.parse import urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import cv2
 import httpx
 import numpy as np
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -32,10 +32,12 @@ try:
     from .authorization import require_broker_access
     from .cloudinary_uploads import signed_upload
     from .notifications import FirestoreSubscriptionRepository, PushSubscriptionRequest
+    from .panorama_jobs import FirestoreJobStore, job_status, run_job
 except ImportError:
     from authorization import require_broker_access
     from cloudinary_uploads import signed_upload
     from notifications import FirestoreSubscriptionRepository, PushSubscriptionRequest
+    from panorama_jobs import FirestoreJobStore, job_status, run_job
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 try:
@@ -135,6 +137,12 @@ class RemoteHybridRequest(BaseModel):
         if self.capture_views is not None and len(self.capture_views) != len(self.image_urls):
             raise ValueError("Provide one capture view for each image URL.")
         return self
+
+
+class RemoteJobRequest(RemoteHybridRequest):
+    image_urls: list[str] = Field(min_length=6, max_length=64)
+    property_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    room_type: str = Field(min_length=1, max_length=120)
 
 
 class StripVercelServicePrefix:
@@ -775,6 +783,57 @@ async def reconstruct_hybrid(
         ransac_threshold,
         fill_gaps,
     )
+
+
+@app.post("/reconstruct/jobs/{job_id}", status_code=202, dependencies=[Depends(require_broker_access)])
+async def start_panorama_job(job_id: UUID, payload: RemoteJobRequest, request: Request, background_tasks: BackgroundTasks):
+    user_id = str(request.state.firebase_user["sub"])
+    identifier = str(job_id)
+    authorization = request.headers.get("authorization", "")
+    store = FirestoreJobStore(user_id, authorization)
+    for url in payload.image_urls:
+        validate_cloudinary_source_url(url, user_id)
+    # Bind the saved draft to a property owned by this broker.
+    property_url = f"https://firestore.googleapis.com/v1/projects/{SECURITY_SETTINGS['project_id']}/databases/(default)/documents/properties/{payload.property_id}"
+    async with httpx.AsyncClient(timeout=10) as client:
+        property_response = await client.get(property_url, headers={"Authorization": authorization})
+    if property_response.status_code == 404:
+        raise HTTPException(404, "This property no longer exists.")
+    if not property_response.is_success:
+        raise HTTPException(503, "Could not check the property before saving this job.")
+    if property_response.json().get("fields", {}).get("brokerId", {}).get("stringValue") != user_id:
+        raise HTTPException(403, "You can only generate a tour for your own property.")
+    job = {
+        "id": identifier, "status": "queued", "stage": "Starting panorama worker",
+        "createdAt": time.time(), "elapsedMs": 0,
+        "requestId": getattr(request.state, "request_id", "unknown"),
+        "input": payload.model_dump(),
+    }
+    created = await store.create(identifier, job)
+    if not created:
+        existing = await store.get(identifier)
+        if not existing or existing["input"] != job["input"]:
+            raise HTTPException(409, "This job ID belongs to a different capture set.")
+        return job_status(existing)
+
+    async def reconstruct(progress):
+        images, filenames = await read_remote_images(payload.image_urls, user_id)
+        return await build_hybrid_response(images, filenames, payload.algorithm, float(payload.ransac_threshold), payload.fill_gaps, capture_views=payload.capture_views, on_progress=progress)
+
+    # Starlette awaits this task after sending 202. It is not tied to the phone's
+    # stream, and the capacity middleware holds its permit until the task ends.
+    background_tasks.add_task(run_job, store, job, reconstruct)
+    logger.info("panorama_job_accepted job_id=%s request_id=%s photos=%s", identifier, job["requestId"], len(payload.image_urls))
+    return job
+
+
+@app.get("/reconstruct/jobs/{job_id}", dependencies=[Depends(require_broker_access)])
+async def get_panorama_job(job_id: UUID, request: Request):
+    store = FirestoreJobStore(str(request.state.firebase_user["sub"]), request.headers.get("authorization", ""))
+    job = await store.get(str(job_id))
+    if job is None:
+        raise HTTPException(404, "This tour job was not submitted. Generate again using your saved photos.")
+    return job_status(job)
 
 
 @app.post("/reconstruct/hybrid/remote", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_broker_access)])

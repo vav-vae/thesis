@@ -346,6 +346,25 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Private job snapshots are signed by the backend. Its REST requests use
+    // the broker's token; client-edited snapshots are rejected by the API.
+    match /tourJobs/{jobId} {
+      function validJobWrite() {
+        return isActive() && isBroker()
+        && request.resource.data.keys().hasOnly(['brokerId', 'snapshot', 'signature'])
+        && request.resource.data.keys().hasAll(['brokerId', 'snapshot', 'signature'])
+        && request.resource.data.brokerId == request.auth.uid
+        && request.resource.data.snapshot is string && request.resource.data.snapshot.size() <= 850000
+        && request.resource.data.signature is string && request.resource.data.signature.size() == 64;
+      }
+      allow get: if isActive() && isBroker()
+        && (!exists(/databases/$(database)/documents/tourJobs/$(jobId)) || resource.data.brokerId == request.auth.uid);
+      allow list: if false;
+      allow create: if validJobWrite();
+      allow update: if validJobWrite() && resource.data.brokerId == request.auth.uid;
+      allow delete: if false;
+    }
+
     // Append-only broker diagnostics. Only administrators can inspect events.
     match /tourLogs/{logId} {
       allow read: if isAdmin();

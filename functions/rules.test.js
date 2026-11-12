@@ -19,6 +19,18 @@ test.after(async () => { if (env) await env.cleanup(); });
 const db = (uid, token = {}) => env.authenticatedContext(uid, token).firestore();
 
 const ruleTest = emulatorAvailable ? test : test.skip;
+ruleTest("private tour jobs isolate brokers and cannot change owners", async () => {
+  const event = { brokerId: 'broker-1', snapshot: '{}', signature: 'a'.repeat(64) };
+  await assertSucceeds(setDoc(doc(db('broker-1'), 'tourJobs/job-1'), event));
+  await assertSucceeds(getDoc(doc(db('broker-1'), 'tourJobs/job-1')));
+  await assertSucceeds(getDoc(doc(db('broker-1'), 'tourJobs/not-created')));
+  await assertFails(getDoc(doc(db('broker-2'), 'tourJobs/job-1')));
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'tourJobs/job-1')));
+  await assertFails(setDoc(doc(db('buyer-1'), 'tourJobs/buyer-job'), { ...event, brokerId: 'buyer-1' }));
+  await assertFails(updateDoc(doc(db('broker-2'), 'tourJobs/job-1'), { brokerId: 'broker-2' }));
+  await assertFails(updateDoc(doc(db('broker-1'), 'tourJobs/job-1'), { brokerId: 'broker-2' }));
+  await assertSucceeds(updateDoc(doc(db('broker-1'), 'tourJobs/job-1'), { snapshot: '{"status":"running"}' }));
+});
 ruleTest("tour diagnostics are append-only, broker-authored and admin-readable", async () => {
   const event = { brokerId: 'broker-1', sessionId: 'session-1', propertyId: 'p-1', level: 'error', message: 'Generation failed', detail: 'HTTP 500', page: '/broker/create-tour', browser: 'test', online: true, clientTime: new Date().toISOString(), createdAt: serverTimestamp() };
   await assertSucceeds(setDoc(doc(db('broker-1'), 'tourLogs/event-1'), event));

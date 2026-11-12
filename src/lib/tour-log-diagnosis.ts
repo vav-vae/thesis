@@ -13,6 +13,7 @@ export function diagnoseTourLog(log: { message: string; detail: string; online: 
   const status = field("HTTP")?.split(" ")[0];
   const stage = field("Last received stage") || field("Stage");
   const facts = [
+    { label: "Job ID", value: field("Job ID") },
     { label: "Last client update", value: stage },
     { label: "Capture set", value: field("Capture set") },
     { label: "Total elapsed", value: field("Elapsed") },
@@ -27,6 +28,7 @@ export function diagnoseTourLog(log: { message: string; detail: string; online: 
   ].filter((fact): fact is { label: string; value: string } => Boolean(fact.value));
 
   const result = (code: string, title: string, explanation: string, suggestions: string[]): TourLogDiagnosis => ({ code, title, explanation, suggestions, facts });
+  if (/TOUR_JOB_FAILED|TOUR_JOB_EXPIRED|Background tour job failed/.test(text)) return result(field("Error code") || "TOUR_JOB_FAILED", "The saved generation job needs attention", "The generation job reported a failure, or its worker stopped before saving a result. Its uploaded photos remain available for retry.", ["Search the Job ID and Request ID in Vercel Logs to locate worker errors and processing time.", "Use Retry saved photos on the capture page to start a new job without recapturing. Check saved job first if only the status connection was interrupted."]);
   if (/TOUR_STREAM_INTERRUPTED|response stream was interrupted|stopped before sending a result|TOUR_STREAM_INCOMPLETE/.test(text)) {
     return result(field("Error code") || (/interrupted/.test(text) ? "TOUR_STREAM_INTERRUPTED" : "TOUR_STREAM_INCOMPLETE"), "Connection ended before the tour result arrived",
       "The browser did not receive a final result. The last client update is not proof that processing failed at that photo: the backend may have continued. HTTP 200 only confirms the response began. The exact cause is unconfirmed.", [

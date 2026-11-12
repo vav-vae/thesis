@@ -23,6 +23,22 @@ rate-limit, and concurrency controls. See [docs/security.md](docs/security.md)
 for local configuration and required production WAF, Cloudinary, and Firestore
 controls.
 
+Tour generation uses persisted background jobs. After photos finish uploading,
+the broker receives a job ID and the browser polls short status requests. The
+latest draft is remembered on the same device for the signed-in broker; returning
+to Create Tour restores progress or the completed preview, including its source
+photos and room details. Publishing still requires the broker's review.
+
+Deploy `firestore.rules` when enabling this feature. The backend uses the broker's
+Firebase token in memory to access private `tourJobs` snapshots, signed with
+`PANORAMA_JOB_SECRET` (or the existing server-only `CLOUDINARY_API_SECRET`). Tokens
+are never saved in jobs. Keep the signing secret stable while jobs are retained.
+Background work shares the existing 300-second Vercel invocation limit; jobs that
+lose their worker expire after 330 seconds and offer Retry saved photos instead
+of waiting indefinitely. This provides recovery from phone disconnections, not
+automatic recovery from a killed compute worker. Server job events also appear
+in Admin → Virtual Tour Logs while the phone is disconnected.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More
