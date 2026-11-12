@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CAPTURE_GUIDE, CAPTURE_VIEWS, captureAlignment, capturePitchReady, captureTargetPitch, normalizeHeading, rearCameraHeading, rearCameraPitch, shortestTurn } from '../src/lib/capture-guide.ts';
+import { CAPTURE_GUIDE, CAPTURE_VIEWS, CAPTURE_STEPS, MAX_CAPTURE_IMAGES, captureStepId, captureAlignment, capturePitchReady, captureTargetPitch, normalizeHeading, rearCameraHeading, rearCameraPitch, shortestTurn } from '../src/lib/capture-guide.ts';
+
+test('the full capture plan fits the photo budget and connects each pole through tilted rows', () => {
+  assert.equal(CAPTURE_STEPS.reduce((total, step) => total + step.target, 0), 62);
+  assert.ok(CAPTURE_STEPS.reduce((total, step) => total + step.target, 0) <= MAX_CAPTURE_IMAGES);
+  assert.deepEqual(CAPTURE_STEPS.map(step => captureTargetPitch(step.view, step.phase)), [0, 30, 60, 90, -30, -60, -90]);
+  assert.equal(new Set(CAPTURE_STEPS.map(step => step.id)).size, 7);
+  for (const step of CAPTURE_STEPS) assert.equal(captureStepId(step.view, step.phase), step.id);
+  assert.equal(captureStepId('around', 'bridge'), 'around:ring');
+});
 
 test('all three capture modes give overlap guidance', () => {
   assert.deepEqual(CAPTURE_VIEWS, ['around', 'top', 'bottom']);

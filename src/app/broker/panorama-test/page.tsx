@@ -32,7 +32,7 @@ import { invalidateTourSummaries } from "@/lib/tour-summaries";
 import { HttpResponseError, readJsonResponse } from "@/lib/http-response";
 import { formatCaptureDiagnostic, sanitizeDiagnosticText, type CaptureDiagnosticContext } from "@/lib/capture-diagnostics";
 import { cachedPromise, mapWithConcurrency } from "@/lib/promise-cache";
-import { CAPTURE_GUIDE, CAPTURE_VIEWS, MIN_CAPTURE_IMAGES, type CaptureView } from "@/lib/capture-guide";
+import { CAPTURE_GUIDE, CAPTURE_VIEWS, MIN_CAPTURE_IMAGES, MAX_CAPTURE_IMAGES, captureStepId, type CaptureShotContext, type CaptureStepId, type CaptureView } from "@/lib/capture-guide";
 import {
   isRemoteImageUrl,
   uploadImageToCloudinary,
@@ -97,6 +97,7 @@ export default function CreateVirtualTourPage() {
   const algorithm = "sift" as const;
   const [ransacThreshold, setRansacThreshold] = useState(4);
   const [files, setFiles] = useState<File[]>([]);
+  const [captureShots, setCaptureShots] = useState<Map<File, CaptureShotContext>>(new Map());
   const [captureView, setCaptureView] = useState<CaptureView>("around");
   const [validationStage, setValidationStage] = useState("");
   const [captureViews, setCaptureViews] = useState<Map<File, CaptureView>>(new Map());
@@ -223,6 +224,17 @@ export default function CreateVirtualTourPage() {
   const blockingIssues = allIssues.filter((issue) => issue.severity === "error").length;
   const sourcesMatchFiles = uploadedSources.length === files.length
     && uploadedSources.every((source, index) => source.file === files[index]);
+  const captureProgress = useMemo(() => {
+    const progress: Partial<Record<CaptureStepId, number>> = {};
+    for (const file of files) {
+      const shot = captureShots.get(file);
+      if (shot && captureViews.get(file) === shot.view) {
+        const id = captureStepId(shot.view, shot.phase);
+        progress[id] = (progress[id] ?? 0) + 1;
+      }
+    }
+    return progress;
+  }, [files, captureShots, captureViews]);
   const sourceImageUrls = restoredInput?.image_urls ?? uploadedSources.map((source) => source.url);
   const sourceCaptureViews = restoredInput?.capture_views ?? files.map((file) => captureViews.get(file) ?? "around");
   const previewIndex = previewedFile ? files.indexOf(previewedFile) : -1;
@@ -359,6 +371,11 @@ export default function CreateVirtualTourPage() {
     selectedRansacThreshold: number = ransacThreshold,
     deferRemoteValidation = false,
   ) => {
+    if (selected.length > MAX_CAPTURE_IMAGES) {
+      setError(`Use at most ${MAX_CAPTURE_IMAGES} photos per room. Remove unwanted photos before adding more.`);
+      return;
+    }
+    setCaptureShots((previous) => new Map([...previous].filter(([file]) => selected.includes(file))));
     addDevLog("info", `Capture set updated: ${selected.length} image${selected.length === 1 ? "" : "s"}.`);
     const revision = workflowRevisionRef.current + 1;
     workflowRevisionRef.current = revision;
@@ -412,6 +429,7 @@ export default function CreateVirtualTourPage() {
 
   const addCapture = async (file?: File, deferRemoteValidation = false) => {
     if (!file) return false;
+    if (filesRef.current.length >= MAX_CAPTURE_IMAGES) throw new Error("64 photos saved. Remove an unwanted photo before adding more.");
     const inspected = await cachedPromise(inspectionCacheRef.current, file, () => inspectImage(file));
     const blockingIssue = inspected.issues.find((issue) => issue.severity === "error");
     if (blockingIssue) {
@@ -568,6 +586,7 @@ export default function CreateVirtualTourPage() {
   };
 
   const reset = () => {
+    setCaptureShots(new Map());
     setRestoredInput(null);
     workflowRevisionRef.current += 1;
     thresholdValidationPendingRef.current = false;
@@ -675,7 +694,10 @@ export default function CreateVirtualTourPage() {
         </div>}
       </section>}
       {previewedFile && previewIndex >= 0 && <CapturedPhotoPreview file={previewedFile} index={previewIndex} total={files.length} view={captureViews.get(previewedFile) ?? "around"} dimensions={previewValidation} issues={previewValidation?.issues.map((issue) => issue.message)} onPrevious={previewIndex > 0 ? () => setPreviewedFile(files[previewIndex - 1]) : undefined} onNext={previewIndex < files.length - 1 ? () => setPreviewedFile(files[previewIndex + 1]) : undefined} onClose={() => setPreviewedFile(null)} onImageError={() => reportError("Photo preview", new Error("The saved image could not be displayed."), { file: previewedFile, photoIndex: previewIndex })} />}
-      {cameraOpen && <PhoneCameraCapture captureView={captureView} onCaptureViewChange={setCaptureView} imageNumber={files.length + 1} onFinish={selectedProperty && roomType.trim() && files.length >= MIN_CAPTURE_IMAGES ? () => void finishCaptureAndGenerate() : undefined} onCapture={async (file) => { addDevLog("info", `Live camera captured ${file.name} (${file.type || "unknown type"}, ${Math.round(file.size / 1024)} KB).`); return addCapture(file, true); }} onDebug={(message, detail) => reportError("Live camera", new Error(`${message}${detail ? ` ${detail.split("\n")[0]}` : ""}`), { photoIndex: files.length, detail })} onClose={closeCaptureSession} />}
+      {cameraOpen && <PhoneCameraCapture captureProgress={captureProgress} captureView={captureView} onCaptureViewChange={setCaptureView} imageNumber={files.length + 1} onFinish={selectedProperty && roomType.trim() && files.length >= MIN_CAPTURE_IMAGES ? () => void finishCaptureAndGenerate() : undefined} onCapture={async (file, _heading, context) => { addDevLog("info", `Live camera captured ${file.name} (${file.type || "unknown type"}, ${Math.round(file.size / 1024)} KB).`); const accepted = await addCapture(file, true); if (accepted && context) {
+        setCaptureShots((previous) => new Map(previous).set(file, context));
+        addDevLog("info", `Capture guide: ${context.view} / ${context.phase}`, `Photo: ${filesRef.current.length}\nTarget: ${context.phase}\nMeasured pitch: ${context.pitch == null ? "unavailable" : `${Math.round(context.pitch)}°`}\nHeading: ${context.heading == null ? "unavailable" : `${Math.round(context.heading)}°`}`);
+      } return accepted; }} onDebug={(message, detail) => reportError("Live camera", new Error(`${message}${detail ? ` ${detail.split("\n")[0]}` : ""}`), { photoIndex: files.length, detail })} onClose={closeCaptureSession} />}
     </div>
   );
 }

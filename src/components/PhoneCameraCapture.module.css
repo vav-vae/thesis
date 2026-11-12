@@ -61,6 +61,18 @@
 .viewChoices button { min-height: 40px; min-width: 0; flex: 1; border-radius: 10px; padding: 6px 8px; background: rgb(255 255 255 / 8%); font-size: 11px; font-weight: 600; line-height: 1.15; }
 .viewChoices button[aria-pressed="true"] { background: #d9e7e6; color: #06323b; }
 .phaseChoices { margin-top: 6px; }
+.captureTrack { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 2px 0 8px; }
+.captureTrack span { height: 4px; border-radius: 4px; background: rgb(255 255 255 / 16%); }
+.captureTrack span[data-done="true"] { background: #4fa998; }
+.captureTrack span[data-active="true"] { background: #d8f5a2; box-shadow: 0 0 0 1px #d8f5a2; }
+.rowActions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 6px; }
+.rowActions button { min-height: 36px; padding: 6px 10px; border: 1px solid rgb(255 255 255 / 20%); border-radius: 8px; color: #d8f5a2; font-size: 11px; }
+.captureCaution { margin-top: 6px; color: rgb(255 255 255 / 55%); font-size: 10px; line-height: 1.35; }
+.currentRow { margin: 4px 0 6px; color: #d8f5a2; font-size: 11px; font-weight: 600; }
+.rowActions .guideToggle { display: none; }
+.overlapGuide { position: absolute; z-index: 1; inset: 0; pointer-events: none; clip-path: inset(0 65% 0 0); }
+.overlapImage { width: 100%; height: 100%; max-width: none; object-fit: contain; opacity: .4; transform: translateX(-65%); }
+.overlapGuide span { position: absolute; left: 8px; bottom: 58px; max-width: 30%; border-radius: 6px; padding: 5px 7px; background: rgb(0 0 0 / 65%); color: white; font-size: 10px; }
 .phaseChoices button { min-height: 34px; }
 .captureTip { padding-top: 7px; color: rgb(255 255 255 / 70%); font-size: 11px; line-height: 1.3; text-align: center; }
 .orientationNote { padding-top: 6px; color: #fde68a; font-size: 11px; line-height: 1.3; text-align: center; }
@@ -276,14 +288,24 @@
     position: absolute;
     z-index: 2;
     top: max(64px, calc(48px + env(safe-area-inset-top)));
-    right: calc(var(--rail-width) + 12px);
+    right: auto;
     left: max(12px, env(safe-area-inset-left));
     padding: 6px 8px;
     border-radius: 12px;
     background: rgb(4 37 43 / 88%);
+    width: min(320px, calc(100% - var(--rail-width) - 24px));
+    max-height: calc(100% - 130px);
+    overflow-y: auto;
   }
 
+  .rowActions .guideToggle { display: inline-flex; align-items: center; }
+  .sessionBar:not([data-expanded="true"]) .phaseChoices,
+  .sessionBar:not([data-expanded="true"]) .captureTip,
+  .sessionBar:not([data-expanded="true"]) .captureCaution { display: none; }
+
   .sessionBar .viewChoices button { min-height: 32px; }
+  .rowActions button { min-height: 30px; }
+  .captureCaution { max-width: 300px; }
   .sessionIntro { min-height: 22px; margin-bottom: 3px; }
   .guideAction { min-height: 24px; }
   .captureTip { padding-top: 3px; }

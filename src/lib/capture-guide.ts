@@ -2,6 +2,21 @@ export type CaptureView = "around" | "top" | "bottom";
 export type CapturePhase = "bridge" | "ring" | "pole";
 
 export const MIN_CAPTURE_IMAGES = 6;
+export const MAX_CAPTURE_IMAGES = 64;
+export const CAPTURE_STEPS = [
+  { id: "around:ring", view: "around", phase: "ring", label: "Walls · level", target: 12 },
+  { id: "top:bridge", view: "top", phase: "bridge", label: "Ceiling bridge · +30°", target: 12 },
+  { id: "top:ring", view: "top", phase: "ring", label: "Ceiling ring · +60°", target: 12 },
+  { id: "top:pole", view: "top", phase: "pole", label: "Directly overhead · +90°", target: 1 },
+  { id: "bottom:bridge", view: "bottom", phase: "bridge", label: "Floor bridge · −30°", target: 12 },
+  { id: "bottom:ring", view: "bottom", phase: "ring", label: "Floor ring · −60°", target: 12 },
+  { id: "bottom:pole", view: "bottom", phase: "pole", label: "Directly below · −90°", target: 1 },
+] as const;
+export type CaptureStepId = typeof CAPTURE_STEPS[number]["id"];
+export type CaptureShotContext = { view: CaptureView; phase: CapturePhase; pitch: number | null; heading: number | null };
+export function captureStepId(view: CaptureView, phase: CapturePhase): CaptureStepId {
+  return `${view}:${view === "around" ? "ring" : phase}` as CaptureStepId;
+}
 export const CAPTURE_TURN_STEP = 30;
 export const CAPTURE_TURN_TOLERANCE = 5;
 export const CAPTURE_VIEWS: CaptureView[] = ["around", "top", "bottom"];
