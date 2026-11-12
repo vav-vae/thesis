@@ -73,6 +73,8 @@ MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_TOTAL_BYTES = 120 * 1024 * 1024
 MAX_IMAGE_PIXELS = int(os.getenv("PANORAMA_MAX_IMAGE_PIXELS", "12500000"))
 MAX_TOTAL_PIXELS = int(os.getenv("PANORAMA_MAX_TOTAL_IMAGE_PIXELS", "100000000"))
+MAX_REMOTE_IMAGES = 64
+PANORAMA_WORKING_MAX_DIMENSION = 1600
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 IMAGE_FORMAT_CONTENT_TYPES = {
@@ -330,6 +332,7 @@ async def decode_image_contents(
     expected_format: str | None = None,
     remaining_bytes: int | None = None,
     remaining_pixels: int | None = None,
+    working_pixel_limit: int | None = None,
 ) -> tuple[np.ndarray, int, int]:
     if declared_type and declared_type not in ALLOWED_IMAGE_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail=f"{label} is not a supported image.")
@@ -347,7 +350,8 @@ async def decode_image_contents(
         declared_type=declared_type,
         expected_format=expected_format,
     )
-    pixel_count = width * height
+    working_width, working_height = panorama_working_size(width, height, working_pixel_limit) if working_pixel_limit is not None else (width, height)
+    pixel_count = working_width * working_height
     if remaining_pixels is not None and pixel_count > remaining_pixels:
         raise HTTPException(
             status_code=413,
@@ -360,7 +364,22 @@ async def decode_image_contents(
     )
     if image is None:
         raise HTTPException(status_code=422, detail=f"{label} could not be decoded as an image.")
+    if working_pixel_limit is not None:
+        actual_height, actual_width = image.shape[:2]
+        target = panorama_working_size(actual_width, actual_height, working_pixel_limit)
+        if target != (actual_width, actual_height):
+            image = await run_in_threadpool(cv2.resize, image, target, interpolation=cv2.INTER_AREA)
+            logger.info("panorama_source_resized photo=%s original=%sx%s working=%sx%s", label, actual_width, actual_height, target[0], target[1])
+        pixel_count = image.shape[0] * image.shape[1]
     return image, len(contents), pixel_count
+
+
+def panorama_working_size(width: int, height: int, pixel_limit: int) -> tuple[int, int]:
+    """Bound retained pixels per capture; never raise the batch memory limit."""
+    if pixel_limit < 1:
+        raise HTTPException(413, "The capture set exceeds the available working-image budget.")
+    scale = min(1.0, PANORAMA_WORKING_MAX_DIMENSION / max(width, height), math.sqrt(pixel_limit / (width * height)))
+    return max(1, math.floor(width * scale)), max(1, math.floor(height * scale))
 
 
 def cloudinary_owner_folder_id(user_id: str) -> str:
@@ -419,7 +438,10 @@ async def read_remote_images(
     user_id: str,
     *,
     client: httpx.AsyncClient | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> tuple[list[np.ndarray], list[str]]:
+    if not image_urls or len(image_urls) > MAX_REMOTE_IMAGES:
+        raise HTTPException(422, f"Provide between 1 and {MAX_REMOTE_IMAGES} source photos per room.")
     if len(set(image_urls)) != len(image_urls):
         raise HTTPException(status_code=422, detail="Source image URLs must be unique.")
 
@@ -443,10 +465,15 @@ async def read_remote_images(
     filenames: list[str] = []
     total_bytes = 0
     total_pixels = 0
+    # Allocate the existing batch budget across every photo. Previously 53+
+    # 1600x1200 captures exceeded 100M pixels before the stitcher could resize.
+    working_pixel_limit = MAX_TOTAL_PIXELS // len(validated_urls)
     batch_deadline = time.monotonic() + MAX_REMOTE_BATCH_SECONDS
     try:
         for index, image_url in enumerate(validated_urls, start=1):
             label = f"Remote image {index}"
+            if on_progress:
+                on_progress(f"Downloading and preparing photo {index} of {len(validated_urls)}")
             remaining_batch_seconds = batch_deadline - time.monotonic()
             if remaining_batch_seconds <= 0:
                 raise HTTPException(
@@ -550,6 +577,7 @@ async def read_remote_images(
                 ],
                 remaining_bytes=MAX_TOTAL_BYTES - total_bytes,
                 remaining_pixels=MAX_TOTAL_PIXELS - total_pixels,
+                working_pixel_limit=working_pixel_limit,
             )
             total_bytes += byte_count
             total_pixels += pixel_count
@@ -817,7 +845,7 @@ async def start_panorama_job(job_id: UUID, payload: RemoteJobRequest, request: R
         return job_status(existing)
 
     async def reconstruct(progress):
-        images, filenames = await read_remote_images(payload.image_urls, user_id)
+        images, filenames = await read_remote_images(payload.image_urls, user_id, on_progress=progress)
         return await build_hybrid_response(images, filenames, payload.algorithm, float(payload.ransac_threshold), payload.fill_gaps, capture_views=payload.capture_views, on_progress=progress)
 
     # Starlette awaits this task after sending 202. It is not tied to the phone's

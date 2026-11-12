@@ -39,6 +39,11 @@ of waiting indefinitely. This provides recovery from phone disconnections, not
 automatic recovery from a killed compute worker. Server job events also appear
 in Admin → Virtual Tour Logs while the phone is disconnected.
 
+Each room job accepts up to 64 source photos. Remote sources are resized during
+loading to share the existing 100-million-pixel working budget, with a maximum
+long edge of 1600 pixels. Every photo is retained; original source-dimension,
+download-size, ownership, and decoding safety checks still apply.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More

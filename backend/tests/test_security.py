@@ -557,6 +557,37 @@ class ApiSecurityIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RemoteImageSecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_64_remote_photos_are_resized_to_the_existing_batch_budget(self):
+        output = BytesIO()
+        Image.new("RGB", (320, 240), (100, 120, 140)).save(output, format="JPEG")
+        body = output.getvalue()
+        urls = [cloudinary_source_url(f"large-set-{index}") for index in range(64)]
+        progress = []
+        def handler(request):
+            return streaming_response(body, content_type="image/jpeg")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch.object(main_module, "MAX_TOTAL_PIXELS", 1_500_000):
+                images, names = await read_remote_images(urls, TEST_USER_ID, client=client, on_progress=progress.append)
+        self.assertEqual(len(images), 64)
+        self.assertEqual(len(names), 64)
+        self.assertLessEqual(sum(image.shape[0] * image.shape[1] for image in images), 1_500_000)
+        self.assertTrue(all(image.shape[1] < 320 for image in images))
+        self.assertEqual(progress[-1], "Downloading and preparing photo 64 of 64")
+
+    async def test_excess_photo_count_is_rejected_before_downloading(self):
+        def handler(request):
+            self.fail("An oversized capture set must not start downloads")
+        with self.assertRaises(main_module.HTTPException) as failure:
+            await self.read_with_handler([cloudinary_source_url(f"source-{index}") for index in range(65)], handler)
+        self.assertEqual(failure.exception.status_code, 422)
+
+    def test_full_size_phone_capture_sets_keep_every_photo_under_100_million_pixels(self):
+        for count in (50, 53, 60, 64):
+            size = main_module.panorama_working_size(1600, 1200, 100_000_000 // count)
+            self.assertLessEqual(size[0] * size[1] * count, 100_000_000)
+            self.assertAlmostEqual(size[0] / size[1], 4 / 3, places=2)
+        self.assertEqual(main_module.panorama_working_size(1600, 1200, 100_000_000 // 35), (1600, 1200))
+
     async def read_with_handler(self, image_urls, handler):
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(
