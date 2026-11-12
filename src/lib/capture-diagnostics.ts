@@ -38,9 +38,14 @@ export function formatCaptureDiagnostic(error: unknown, context: CaptureDiagnost
     if (depth > 4 || seen.has(value)) return;
     seen.add(value);
     if (!value || typeof value !== "object") { lines.push(String(value)); return; }
-    const item = value as { name?: unknown; message?: unknown; code?: unknown; status?: unknown; statusText?: unknown; url?: unknown; requestId?: unknown; vercelId?: unknown; retryAfter?: unknown; contentType?: unknown; stack?: unknown; cause?: unknown };
+    const item = value as { name?: unknown; message?: unknown; code?: unknown; status?: unknown; statusText?: unknown; url?: unknown; requestId?: unknown; vercelId?: unknown; retryAfter?: unknown; contentType?: unknown; stack?: unknown; cause?: unknown; lastStage?: unknown; streamDurationMs?: unknown; lastUpdateAgoMs?: unknown; receivedBytes?: unknown; progressEvents?: unknown };
     lines.push(`${depth ? "Caused by: " : ""}${typeof item.name === "string" ? item.name : "Error"}: ${typeof item.message === "string" ? item.message : "No error message was provided"}`);
     if (typeof item.code === "string") lines.push(`Error code: ${item.code}`);
+    if (typeof item.lastStage === "string") lines.push(`Last received stage: ${item.lastStage || "No progress received"}`);
+    if (typeof item.streamDurationMs === "number") lines.push(`Stream duration: ${item.streamDurationMs} ms`);
+    if (typeof item.lastUpdateAgoMs === "number") lines.push(`Time since last progress: ${item.lastUpdateAgoMs} ms`);
+    if (typeof item.receivedBytes === "number") lines.push(`Stream bytes received: ${item.receivedBytes}`);
+    if (typeof item.progressEvents === "number") lines.push(`Progress events received: ${item.progressEvents}`);
     if (typeof item.status === "number") lines.push(`HTTP: ${item.status} ${typeof item.statusText === "string" ? item.statusText : ""}`.trim());
     if (typeof item.url === "string" && item.url) lines.push(`Response URL: ${item.url}`);
     if (typeof item.requestId === "string") lines.push(`Request ID: ${item.requestId}`);

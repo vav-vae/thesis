@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { diagnoseTourLog } from "@/lib/tour-log-diagnosis";
 
 type TourLog = {
   id: string; brokerId: string; sessionId: string; propertyId: string;
@@ -32,11 +33,11 @@ export default function TourLogMonitor() {
   }, [paused]);
 
   const filtered = logs.filter((log) => (level === "all" || log.level === level)
-    && [log.message, log.detail, log.brokerId, log.propertyId, log.sessionId].join(" ").toLowerCase().includes(search.toLowerCase()));
+    && [log.message, log.detail, log.brokerId, log.propertyId, log.sessionId, log.level === "error" ? diagnoseTourLog(log).code : ""].join(" ").toLowerCase().includes(search.toLowerCase()));
 
   async function copy(log: TourLog) {
     try {
-      await navigator.clipboard.writeText(JSON.stringify(log, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify({ ...log, diagnosis: log.level === "error" ? diagnoseTourLog(log) : undefined }, null, 2));
       setCopied(log.id);
     } catch { setCopied("failed"); }
   }
@@ -57,8 +58,18 @@ export default function TourLogMonitor() {
     <div className="space-y-3">{filtered.map((log) => <article key={log.id} className={`rounded-xl border bg-white p-4 ${log.level === "error" ? "border-red-200" : "border-slate-200"}`}>
       <div className="flex flex-wrap items-center gap-3 text-xs"><span className={log.level === "error" ? "font-bold text-red-700" : "font-bold text-teal-700"}>{log.level.toUpperCase()}</span><time>{log.createdAt?.toDate().toLocaleString() ?? "Time pending"}</time><button type="button" onClick={() => void copy(log)} className="ml-auto rounded-lg border px-3 py-1">{copied === log.id ? "Copied" : "Copy event"}</button></div>
       <p className="mt-2 break-words text-sm font-semibold text-slate-900">{log.message}</p>
+      {log.level === "error" && <ErrorDiagnosis log={log} />}
       <p className="mt-2 break-all text-xs text-slate-600">Broker: {log.brokerId} · Property: {log.propertyId || "Not selected"} · Session: {log.sessionId}</p>
       <details className="mt-3 text-sm"><summary className="cursor-pointer text-teal-800">Diagnostic details</summary><p className="mt-2 break-all text-xs text-slate-600">{log.page} · {log.online ? "Online" : "Offline"} · Client time: {log.clientTime}<br />{log.browser}</p><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-4 text-xs text-slate-100">{log.detail || "No additional details."}</pre></details>
     </article>)}</div>
   </section>;
+}
+
+function ErrorDiagnosis({ log }: { log: TourLog }) {
+  const diagnosis = diagnoseTourLog(log);
+  return <div className="mt-3 space-y-3 rounded-xl bg-red-50/60 p-4 text-sm text-slate-800">
+    <div><span className="break-all font-mono text-xs font-bold text-red-800">{diagnosis.code}</span><h3 className="mt-1 font-semibold">{diagnosis.title}</h3><p className="mt-1">{diagnosis.explanation}</p></div>
+    <dl className="grid gap-3 sm:grid-cols-2">{diagnosis.facts.map((fact) => <div key={fact.label} className="min-w-0"><dt className="text-xs font-semibold text-slate-600">{fact.label}</dt><dd className="mt-1 break-all font-mono text-xs">{fact.value}</dd></div>)}</dl>
+    <div><h4 className="font-semibold">Suggested debugging steps</h4><ol className="mt-2 list-decimal space-y-2 pl-5">{diagnosis.suggestions.map((suggestion) => <li key={suggestion}>{suggestion}</li>)}</ol></div>
+  </div>;
 }

@@ -420,6 +420,7 @@ export default function CreateVirtualTourPage() {
   const runReconstruction = async (sources: UploadedSource[], selected: File[], revision: number) => {
     if (generatingRef.current || revision !== workflowRevisionRef.current) return;
     let lastStage = "Connecting to the panorama processor";
+    const generationStarted = Date.now();
     addDevLog("info", `Tour generation started with ${selected.length} images (algorithm: ${algorithm}, RANSAC: ${ransacThreshold}).`);
     const persistedSourceUrls = sources.map((source) => source.url);
     generatingRef.current = true;
@@ -442,7 +443,7 @@ export default function CreateVirtualTourPage() {
       addDevLog("info", `Tour generation completed (${result.metadata.output_width}×${result.metadata.output_height}).`);
     } catch (generateError) {
       if (revision === workflowRevisionRef.current) {
-        reportError(`Tour generation (${lastStage})`, generateError, { endpoint: `${PANORAMA_API_URL}/reconstruct/hybrid/remote`, photoCount: selected.length, algorithm, ransacThreshold });
+        reportError(`Tour generation (${lastStage})`, generateError, { endpoint: `${PANORAMA_API_URL}/reconstruct/hybrid/remote`, photoCount: selected.length, algorithm, ransacThreshold, durationMs: Date.now() - generationStarted });
         const detail = generateError instanceof Error ? generateError.message : "Could not connect to the panorama processor.";
         const networkFailure = /^(load failed|failed to fetch|network ?error|network request failed)$/i.test(detail);
         setError(networkFailure

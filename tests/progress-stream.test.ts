@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readProgressStream } from "../src/lib/progress-stream.ts";
+import { ProgressStreamError, readProgressStream } from "../src/lib/progress-stream.ts";
 import { HttpResponseError } from "../src/lib/http-response.ts";
 
 test("stream errors retain the server request ID even when HTTP status is 200", async () => {
@@ -44,4 +44,25 @@ test("progress stream surfaces processor errors", async () => {
 test("progress stream rejects a missing final result", async () => {
   const response = chunkedResponse(['{"type":"progress","stage":"Reconstructing"}\n']);
   await assert.rejects(readProgressStream(response), /stopped before sending a result during “Reconstructing”.*photos are still on this page/);
+});
+
+test("interrupted streams retain the last update, timing, bytes, and correlation IDs", async () => {
+  let reads = 0;
+  const response = new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (reads++ === 0) controller.enqueue(new TextEncoder().encode('{"type":"progress","stage":"Checking overlap for photo 6 of 28"}\n'));
+      else controller.error(new TypeError("Load failed"));
+    },
+  }), { headers: { "X-Request-ID": "request-456" } });
+  await assert.rejects(readProgressStream(response), (error) => {
+    assert.ok(error instanceof ProgressStreamError);
+    assert.equal(error.code, "TOUR_STREAM_INTERRUPTED");
+    assert.equal(error.lastStage, "Checking overlap for photo 6 of 28");
+    assert.equal(error.requestId, "request-456");
+    assert.equal(error.progressEvents, 1);
+    assert.ok(error.receivedBytes > 0);
+    assert.ok(error.streamDurationMs >= 0);
+    assert.ok(error.cause instanceof TypeError);
+    return true;
+  });
 });
