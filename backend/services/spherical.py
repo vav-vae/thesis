@@ -147,7 +147,10 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
                 # Brute force compares every descriptor to every descriptor;
                 # at 40 photos that repeats billions of distance operations.
                 if second not in indexes:
-                    search = cv2.FlannBasedMatcher(dict(algorithm=1, trees=4), dict(checks=64))
+                    # Large sets otherwise spend most of the invocation on
+                    # approximate descriptor search. Geometry/inlier gates and
+                    # the final all-camera reprojection validation are unchanged.
+                    search = cv2.FlannBasedMatcher(dict(algorithm=1, trees=4), dict(checks=32 if count > 40 else 64))
                     search.add([second_descriptors])
                     search.train()
                     indexes[second] = search
@@ -363,6 +366,80 @@ def _refine_cameras(prepared, on_progress=None):
     raise StitchingError('Camera alignment could not be stabilized. Your photos are still saved on this page. Check for zoom changes or movement between photos, then retry.')
 
 
+def _camera_canvas_regions(camera, rotation, image_size, width, height):
+    """Conservative spherical cap enclosing a photo, including poles and wrap.
+
+    Every photo still undergoes exact per-pixel projection/visibility checks.
+    This only skips canvas regions outside its maximum corner viewing angle.
+    """
+    image_width, image_height = image_size
+    if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-3):
+        return [(0, width, 0, height)]
+    intrinsic = camera.K()
+    dx = max(abs(intrinsic[0, 2]), abs(image_width - 1 - intrinsic[0, 2])) / intrinsic[0, 0]
+    dy = max(abs(intrinsic[1, 2]), abs(image_height - 1 - intrinsic[1, 2])) / intrinsic[1, 1]
+    radius = min(np.pi / 2, np.arctan(np.hypot(dx, dy)) + .01)
+    axis = np.asarray(rotation[:, 2], np.float64)
+    axis /= np.linalg.norm(axis)
+    polar = np.arccos(np.clip(-axis[1], -1, 1))
+    top = max(0, int(np.floor((polar - radius) / np.pi * height - .5)) - 2)
+    bottom = min(height, int(np.ceil((polar + radius) / np.pi * height - .5)) + 3)
+    if radius >= min(polar, np.pi - polar):
+        return [(0, width, top, bottom)]
+    span = np.arcsin(np.clip(np.sin(radius) / np.sin(polar), -1, 1))
+    longitude = np.arctan2(axis[0], axis[2])
+    left = int(np.floor(((longitude - span) / np.pi + 1) / 2 * width - .5)) - 2
+    right = int(np.ceil(((longitude + span) / np.pi + 1) / 2 * width - .5)) + 3
+    if right - left >= width:
+        return [(0, width, top, bottom)]
+    if left < 0:
+        return [(0, right, top, bottom), (width + left, width, top, bottom)]
+    if right > width:
+        return [(left, width, top, bottom), (0, right - width, top, bottom)]
+    return [(left, right, top, bottom)]
+
+
+def _render_spherical_photos(working, cameras, rotations, width=4096, height=2048, on_progress=None, *, bounded=True):
+    accumulated = np.zeros((height, width, 3), np.float32)
+    weights = np.zeros((height, width), np.float32)
+    longitude = ((np.arange(width, dtype=np.float32) + .5) / width * 2 - 1) * np.pi
+    polar = (np.arange(height, dtype=np.float32)[:, None] + .5) / height * np.pi
+    sin_lon, cos_lon = np.sin(longitude)[None, :], np.cos(longitude)[None, :]
+    sin_polar, cos_polar = np.sin(polar), np.cos(polar)
+    sampled = 0
+    for image_index, (image, camera, rotation) in enumerate(zip(working, cameras, rotations)):
+        if on_progress:
+            on_progress(f"Rendering photo {image_index + 1} of {len(working)}")
+        intrinsic, inverse = camera.K().astype(np.float32), rotation.T
+        image_height, image_width = image.shape[:2]
+        regions = _camera_canvas_regions(camera, rotation, (image_width, image_height), width, height) if bounded else [(0, width, 0, height)]
+        for left, right, top, bottom in regions:
+            for start in range(top, bottom, 128):
+                end = min(start + 128, bottom)
+                sampled += (end - start) * (right - left)
+                world_x = sin_polar[start:end] * sin_lon[:, left:right]
+                world_y = -cos_polar[start:end]
+                world_z = sin_polar[start:end] * cos_lon[:, left:right]
+                x = inverse[0, 0] * world_x + inverse[0, 1] * world_y + inverse[0, 2] * world_z
+                y = inverse[1, 0] * world_x + inverse[1, 1] * world_y + inverse[1, 2] * world_z
+                z = inverse[2, 0] * world_x + inverse[2, 1] * world_y + inverse[2, 2] * world_z
+                front = z > 1e-6
+                denominator = np.where(front, z, 1)
+                map_x = (intrinsic[0, 0] * x / denominator + intrinsic[0, 2]).astype(np.float32)
+                map_y = (intrinsic[1, 1] * y / denominator + intrinsic[1, 2]).astype(np.float32)
+                valid = front & (map_x >= 0) & (map_x <= image_width - 1) & (map_y >= 0) & (map_y <= image_height - 1)
+                if not np.any(valid):
+                    continue
+                edge = np.minimum(np.minimum(map_x, image_width - 1 - map_x), np.minimum(map_y, image_height - 1 - map_y))
+                weight = np.where(valid, np.maximum(edge, 0) + 1, 0)
+                map_x[~valid], map_y[~valid] = -1, -1
+                warped = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+                accumulated[start:end, left:right] += warped.astype(np.float32) * weight[:, :, None]
+                weights[start:end, left:right] += weight
+    panorama = np.clip(np.divide(accumulated, weights[:, :, None], out=accumulated, where=weights[:, :, None] > 0), 0, 255).astype(np.uint8)
+    return panorama, np.where(weights > 0, 255, 0).astype(np.uint8), sampled
+
+
 def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold, *, prepared: SphericalMatches | None = None, capture_views=None, on_progress: Callable[[str], None] | None = None):
     """Estimate camera rotations jointly, then feather onto a true 360 x 180 canvas.
 
@@ -394,52 +471,22 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
             rotations = [(correction @ camera.R).astype(np.float32) for camera in cameras]
         else:
             rotations = cv2.detail.waveCorrect([c.R for c in cameras], cv2.detail.WAVE_CORRECT_HORIZ)
+        camera_estimation_ms = round((perf_counter() - started) * 1000, 2)
+        render_started = perf_counter()
         width, height = 4096, 2048
-        accumulated = np.zeros((height, width, 3), np.float32)
-        weights = np.zeros((height, width), np.float32)
-        # Inverse-project the fixed canvas. OpenCV's spherical warpRoi can miss
-        # the zenith for upward-facing cameras, even when it is inside a photo.
-        # Pixel-centre rays cover both poles and the wrap seam without trusting
-        # that ROI. Process strips to bound temporary memory for large sets.
-        longitude = ((np.arange(width, dtype=np.float32) + .5) / width * 2 - 1) * np.pi
-        sin_lon, cos_lon = np.sin(longitude)[None, :], np.cos(longitude)[None, :]
-        for image_index, (image, camera, rotation) in enumerate(zip(working, cameras, rotations)):
-            if on_progress:
-                on_progress(f"Rendering photo {image_index + 1} of {len(working)}")
-            intrinsic = camera.K().astype(np.float32)
-            inverse = rotation.T
-            image_height, image_width = image.shape[:2]
-            for start in range(0, height, 128):
-                end = min(start + 128, height)
-                polar = (np.arange(start, end, dtype=np.float32)[:, None] + .5) / height * np.pi
-                world_x, world_y, world_z = np.sin(polar) * sin_lon, -np.cos(polar), np.sin(polar) * cos_lon
-                x = inverse[0, 0] * world_x + inverse[0, 1] * world_y + inverse[0, 2] * world_z
-                y = inverse[1, 0] * world_x + inverse[1, 1] * world_y + inverse[1, 2] * world_z
-                z = inverse[2, 0] * world_x + inverse[2, 1] * world_y + inverse[2, 2] * world_z
-                front = z > 1e-6
-                denominator = np.where(front, z, 1)
-                map_x = (intrinsic[0, 0] * x / denominator + intrinsic[0, 2]).astype(np.float32)
-                map_y = (intrinsic[1, 1] * y / denominator + intrinsic[1, 2]).astype(np.float32)
-                valid = front & (map_x >= 0) & (map_x <= image_width - 1) & (map_y >= 0) & (map_y <= image_height - 1)
-                if not np.any(valid):
-                    continue
-                edge = np.minimum(np.minimum(map_x, image_width - 1 - map_x), np.minimum(map_y, image_height - 1 - map_y))
-                weight = np.where(valid, np.maximum(edge, 0) + 1, 0)
-                map_x[~valid], map_y[~valid] = -1, -1
-                warped = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-                accumulated[start:end] += warped.astype(np.float32) * weight[:, :, None]
-                weights[start:end] += weight
-        panorama = np.clip(np.divide(accumulated, weights[:, :, None], out=accumulated, where=weights[:, :, None] > 0), 0, 255).astype(np.uint8)
-        evidence = np.where(weights > 0, 255, 0).astype(np.uint8)
+        panorama, evidence, render_samples = _render_spherical_photos(working, cameras, rotations, width, height, on_progress)
     except cv2.error as error:
         raise StitchingError('Spherical camera alignment failed. Retake overlapping images from one fixed position.') from error
     return panorama, evidence, reports, {
         **alignment_report,
         'working_max_dimension': 1600,
+        'render_sample_count': render_samples,
+        'render_full_sample_count': width * height * len(working),
         'focal_lengths': [round(c.focal, 2) for c in cameras],
         'horizontal_coverage_ratio': round(float(np.count_nonzero(np.any(evidence > 0, axis=0))) / width, 6),
         'coverage_report': spherical_coverage(evidence),
-        'camera_estimation_ms': round((perf_counter() - started) * 1000, 2),
+        'camera_estimation_ms': camera_estimation_ms,
+        'rendering_ms': round((perf_counter() - render_started) * 1000, 2),
     }
 
 
