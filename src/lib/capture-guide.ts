@@ -13,7 +13,7 @@ export const CAPTURE_STEPS = [
   { id: "bottom:pole", view: "bottom", phase: "pole", label: "Directly below · −90°", target: 1 },
 ] as const;
 export type CaptureStepId = typeof CAPTURE_STEPS[number]["id"];
-export type CaptureShotContext = { view: CaptureView; phase: CapturePhase; pitch: number | null; heading: number | null };
+export type CaptureShotContext = { view: CaptureView; phase: CapturePhase; pitch: number | null; heading: number | null; absoluteHeading?: boolean };
 export function captureStepId(view: CaptureView, phase: CapturePhase): CaptureStepId {
   return `${view}:${view === "around" ? "ring" : phase}` as CaptureStepId;
 }
@@ -95,5 +95,24 @@ export function captureAlignment(view: CaptureView, phase: CapturePhase, pitch: 
     : turn != null && Math.abs(turn) > CAPTURE_TURN_TOLERANCE ? `Turn ${turn > 0 ? "right" : "left"} ${Math.round(Math.abs(turn))}° · keep this tilt`
     : isPole ? `${view === "top" ? "Overhead" : "Floor below"} ready · hold steady and check overlap`
     : "Position ready · hold steady and check overlap";
+  return { targetPitch, pitchError, turn, ready, direction, message };
+}
+
+/** Retakes aim at the saved shot, never the next 30-degree capture position. */
+export function retakeAlignment(view: CaptureView, phase: CapturePhase, pitch: number | null, heading: number | null, target?: CaptureShotContext, absoluteHeading = false) {
+  const targetPitch = target?.pitch != null && Number.isFinite(target.pitch) && Math.abs(target.pitch) <= 90 ? target.pitch : captureTargetPitch(view, phase);
+  const pitchError = pitch != null && Number.isFinite(pitch) && Math.abs(pitch) <= 90 ? targetPitch - pitch : null;
+  const isPole = view !== "around" && phase === "pole";
+  // Relative device headings may reset when the camera/sensor listener reopens.
+  const headingAvailable = !isPole && absoluteHeading && target?.absoluteHeading === true && target.heading != null && Number.isFinite(target.heading) && heading != null && Number.isFinite(heading);
+  const turn = headingAvailable ? shortestTurn(heading!, target!.heading!) : null;
+  const pitchReady = pitchError != null && Math.abs(pitchError) <= 5;
+  const ready = pitchReady && (isPole || (turn != null && Math.abs(turn) <= CAPTURE_TURN_TOLERANCE));
+  const direction = pitchError == null ? null : !pitchReady ? pitchError > 0 ? "up" : "down" : turn != null && Math.abs(turn) > CAPTURE_TURN_TOLERANCE ? turn > 0 ? "right" : "left" : null;
+  const message = pitchError == null ? "Tilt unavailable · match the original photo visually"
+    : !pitchReady ? `Tilt ${pitchError > 0 ? "up" : "down"} ${Math.round(Math.abs(pitchError))}° · original target ${Math.round(targetPitch)}°`
+    : !isPole && !headingAvailable ? "Tilt matched · match the original photo visually; saved compass direction unavailable"
+    : turn != null && Math.abs(turn) > CAPTURE_TURN_TOLERANCE ? `Turn ${turn > 0 ? "right" : "left"} ${Math.round(Math.abs(turn))}° toward the original photo`
+    : "Original direction matched · check the image and hold steady";
   return { targetPitch, pitchError, turn, ready, direction, message };
 }

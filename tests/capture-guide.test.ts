@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CAPTURE_GUIDE, CAPTURE_VIEWS, CAPTURE_STEPS, MAX_CAPTURE_IMAGES, captureStepId, captureAlignment, capturePitchReady, captureTargetPitch, normalizeHeading, rearCameraHeading, rearCameraPitch, shortestTurn } from '../src/lib/capture-guide.ts';
+import { CAPTURE_GUIDE, CAPTURE_VIEWS, CAPTURE_STEPS, MAX_CAPTURE_IMAGES, captureStepId, captureAlignment, retakeAlignment, capturePitchReady, captureTargetPitch, normalizeHeading, rearCameraHeading, rearCameraPitch, shortestTurn } from '../src/lib/capture-guide.ts';
 
 test('the full capture plan fits the photo budget and connects each pole through tilted rows', () => {
   assert.equal(CAPTURE_STEPS.reduce((total, step) => total + step.target, 0), 62);
@@ -113,4 +113,35 @@ test('overhead and directly below use vertical targets without a heading', () =>
   assert.equal(capturePitchReady('bottom', -90), false);
   assert.equal(capturePitchReady('top', NaN, 'pole'), false);
   assert.equal(capturePitchReady('bottom', -100, 'pole'), false);
+});
+
+
+test('retakes target the saved heading rather than advancing another thirty degrees', () => {
+  const target = { view: 'top', phase: 'ring', pitch: 58, heading: 5, absoluteHeading: true } as const;
+  const aim = retakeAlignment('top', 'ring', 58, 355, target, true);
+  assert.equal(aim.targetPitch, 58);
+  assert.equal(aim.turn, 10);
+  assert.equal(aim.direction, 'right');
+  assert.equal(aim.ready, false);
+  assert.equal(retakeAlignment('top', 'ring', 58, 5, target, true).ready, true);
+  assert.equal(retakeAlignment('top', 'ring', 58, 35, target, true).direction, 'left');
+});
+
+test('retakes never compare relative headings across reopened camera sessions', () => {
+  const target = { view: 'around', phase: 'ring', pitch: 2, heading: 50 } as const;
+  for (const absolute of [false, true]) {
+    const aim = retakeAlignment('around', 'ring', 2, 50, target, absolute);
+    assert.equal(aim.turn, null);
+    assert.equal(aim.ready, false);
+    assert.match(aim.message, /visually/);
+  }
+  assert.equal(retakeAlignment('around', 'ring', 2, 50, { ...target, absoluteHeading: true }, false).ready, false);
+});
+
+test('retakes handle missing metadata and vertical views without inventing a heading', () => {
+  assert.equal(retakeAlignment('bottom', 'ring', -60, null).targetPitch, -60);
+  assert.equal(retakeAlignment('bottom', 'pole', -90, null).ready, true);
+  assert.equal(retakeAlignment('top', 'pole', 90, null).ready, true);
+  assert.equal(retakeAlignment('top', 'pole', null, null).ready, false);
+  assert.equal(retakeAlignment('top', 'ring', 0, 5, {view:'top',phase:'ring',pitch:NaN,heading:NaN,absoluteHeading:true}, true).targetPitch, 60);
 });

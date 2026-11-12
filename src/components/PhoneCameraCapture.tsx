@@ -4,13 +4,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Camera, CameraIcon, Check, Compass, LoaderCircle, Maximize2, Minimize2, MoreHorizontal, RefreshCcw, RotateCcw, SwitchCamera, Upload, X } from "lucide-react";
-import { CAPTURE_GUIDE, CAPTURE_VIEWS, CAPTURE_STEPS, CAPTURE_TURN_STEP, MIN_CAPTURE_IMAGES, MAX_CAPTURE_IMAGES, captureStepId, captureAlignment, rearCameraHeading, rearCameraPitch, type CaptureShotContext, type CaptureStepId, type CapturePhase, type CaptureView } from "@/lib/capture-guide";
+import { CAPTURE_GUIDE, CAPTURE_VIEWS, CAPTURE_STEPS, CAPTURE_TURN_STEP, MIN_CAPTURE_IMAGES, MAX_CAPTURE_IMAGES, captureStepId, captureAlignment, retakeAlignment, rearCameraHeading, rearCameraPitch, type CaptureShotContext, type CaptureStepId, type CapturePhase, type CaptureView } from "@/lib/capture-guide";
 import styles from "./PhoneCameraCapture.module.css";
 import CapturedPhotoPreview, { LocalCaptureImage } from "./CapturedPhotoPreview";
 
 type PhoneCameraCaptureProps = {
   imageNumber: number;
-  replacement?: { total: number; phase: CapturePhase };
+  replacement?: { total: number; phase: CapturePhase; original: File; target?: CaptureShotContext };
   captureView?: CaptureView;
   onCaptureViewChange?: (view: CaptureView) => void;
   onCapture: (file: File, heading?: number, context?: CaptureShotContext) => void | boolean | Promise<void | boolean>;
@@ -42,7 +42,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
   const [cameraError, setCameraError] = useState("");
   const [captureError, setCaptureError] = useState("");
   const [motionError, setMotionError] = useState("");
-  const [orientation, setOrientation] = useState<{ heading: number | null; pitch: number | null; time: number } | null>(null);
+  const [orientation, setOrientation] = useState<{ heading: number | null; pitch: number | null; absoluteHeading: boolean; time: number } | null>(null);
   const [sensorClock, setSensorClock] = useState(0);
   const [previousHeadings, setPreviousHeadings] = useState<Partial<Record<`${CaptureView}:${CapturePhase}`, number | null>>>({});
   const [capturePhase, setCapturePhase] = useState<CapturePhase>(replacement?.phase ?? "bridge");
@@ -52,7 +52,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceIndex, setDeviceIndex] = useState(0);
-  const [preview, setPreview] = useState<{ file: File; url: string; heading: number | null; pitch: number | null } | null>(null);
+  const [preview, setPreview] = useState<{ file: File; url: string; heading: number | null; pitch: number | null; absoluteHeading: boolean } | null>(null);
   const [reviewEveryPhoto, setReviewEveryPhoto] = useState(false);
   const [savedMessage, setSavedMessage] = useState("");
   const [savedPhoto, setSavedPhoto] = useState<{ file: File; number: number; view: CaptureView; phase: CapturePhase } | null>(null);
@@ -71,7 +71,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
   const pitch = sensorFresh ? orientation.pitch : null;
   const phase = captureView === "around" ? "ring" : capturePhase;
   const headingKey = `${captureView}:${phase}` as const;
-  const alignment = captureAlignment(captureView, phase, pitch, heading, previousHeadings[headingKey] ?? null);
+  const alignment = replacement ? retakeAlignment(captureView, phase, pitch, heading, replacement.target, orientation?.absoluteHeading ?? false) : captureAlignment(captureView, phase, pitch, heading, previousHeadings[headingKey] ?? null);
   const angleReady = alignment.ready;
   const targetLabel = captureView === "around" ? "Level row" : phase === "bridge" ? "Connect to the wall row" : phase === "pole" ? captureView === "top" ? "Directly overhead" : "Directly below" : captureView === "top" ? "Ceiling ring" : "Floor ring";
   const savedCount = replacement?.total ?? imageNumber - 1;
@@ -81,7 +81,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
   const nextStep = CAPTURE_STEPS[stepIndex + 1];
   const rowCount = captureProgress[currentStep.id] ?? 0;
   const canCompare = savedPhoto && savedPhoto.view === captureView && savedPhoto.phase === phase && phase !== "pole";
-  const guideMessage = !motionEnabled ? (captureView === "around" ? "Keep level · overlap the previous view by 30–50%"
+  const guideMessage = replacement ? (!motionEnabled ? "Enable Angle guide, or match the original photo visually" : !rearFacing ? "Switch to the rear camera to match the original" : !sensorFresh ? "Waiting for motion data · match the original photo visually" : alignment.message) : !motionEnabled ? (captureView === "around" ? "Keep level · overlap the previous view by 30–50%"
     : phase === "pole" ? `Point ${captureView === "top" ? "directly overhead" : "directly below"} · overlap the ${captureView === "top" ? "ceiling" : "floor"} ring`
     : `Tilt ${captureView === "top" ? "up" : "down"} about ${Math.abs(alignment.targetPitch)}° · overlap the previous row by 30–50%`)
     : !rearFacing ? "Switch to the rear camera for angle guidance"
@@ -222,7 +222,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
       const now = Date.now();
       if (now - lastUpdate < 100) return;
       lastUpdate = now;
-      setOrientation({ heading: rearCameraHeading(event.alpha, event.beta, event.gamma), pitch: rearCameraPitch(event.beta, event.gamma), time: now });
+      setOrientation({ heading: rearCameraHeading(event.alpha, event.beta, event.gamma), pitch: rearCameraPitch(event.beta, event.gamma), absoluteHeading: event.absolute === true, time: now });
       setSensorClock(now);
     };
     const timer = window.setInterval(() => setSensorClock(Date.now()), 500);
@@ -248,16 +248,16 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     }
   };
 
-  const createPreview = (file: File, capturedHeading: number | null = null, capturedPitch: number | null = null) => {
+  const createPreview = (file: File, capturedHeading: number | null = null, capturedPitch: number | null = null, absoluteHeading = false) => {
     setOptionsOpen(false);
     clearPreview();
     const url = URL.createObjectURL(file);
     previewUrlRef.current = url;
-    setPreview({ file, url, heading: capturedHeading, pitch: capturedPitch });
+    setPreview({ file, url, heading: capturedHeading, pitch: capturedPitch, absoluteHeading });
   };
 
-  const savePhoto = async (file: File, capturedHeading: number | null, capturedPitch: number | null) => {
-    const accepted = await onCapture(file, capturedHeading ?? undefined, { view: captureView, phase, pitch: capturedPitch, heading: capturedHeading });
+  const savePhoto = async (file: File, capturedHeading: number | null, capturedPitch: number | null, absoluteHeading: boolean) => {
+    const accepted = await onCapture(file, capturedHeading ?? undefined, { view: captureView, phase, pitch: capturedPitch, heading: capturedHeading, absoluteHeading });
     if (accepted === false) throw new Error("This photo was not accepted. Follow the selected view’s capture guide and try again.");
     if (phase !== "pole") setPreviousHeadings((previous) => ({ ...previous, [headingKey]: capturedHeading }));
     setSavedMessage(`Photo ${imageNumber} saved · continue capturing`);
@@ -277,6 +277,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     setSavedMessage("");
     // Snapshot the lens heading before JPEG encoding or review can move it.
     const capturedHeading = sensorFresh && orientation && Date.now() - orientation.time < 1500 ? heading : null;
+    const absoluteHeading = orientation?.absoluteHeading === true;
     const capturedPitch = sensorFresh && orientation && Date.now() - orientation.time < 1500 ? pitch : null;
     const request = cameraRequestRef.current;
     captureBusyRef.current = true;
@@ -301,10 +302,10 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
       if (request !== cameraRequestRef.current) return;
       if (!blob) throw new Error("The camera frame could not be saved.");
       capturedFile = new File([blob], `capture-${captureView}-${imageNumber}-${Date.now()}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
-      if (replacement || reviewEveryPhoto) createPreview(capturedFile, capturedHeading, capturedPitch);
-      else await savePhoto(capturedFile, capturedHeading, capturedPitch);
+      if (replacement || reviewEveryPhoto) createPreview(capturedFile, capturedHeading, capturedPitch, absoluteHeading);
+      else await savePhoto(capturedFile, capturedHeading, capturedPitch, absoluteHeading);
     } catch (error) {
-      if (capturedFile) createPreview(capturedFile, capturedHeading, capturedPitch);
+      if (capturedFile) createPreview(capturedFile, capturedHeading, capturedPitch, absoluteHeading);
       onDebugRef.current?.("Live camera photo capture failed.", error instanceof Error ? `${error.name}: ${error.message}\n${error.stack || ""}` : String(error));
       setCaptureError(error instanceof Error ? error.message : "The image could not be captured.");
     } finally {
@@ -319,7 +320,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
     try {
       setSaving(true);
       setCaptureError("");
-      await savePhoto(preview.file, preview.heading, preview.pitch);
+      await savePhoto(preview.file, preview.heading, preview.pitch, preview.absoluteHeading);
     } catch (error) {
       onDebugRef.current?.("Captured photo could not be added to the tour.", error instanceof Error ? `${error.name}: ${error.message}\n${error.stack || ""}` : String(error));
       setCaptureError(error instanceof Error ? error.message : "The photo could not be added.");
@@ -378,6 +379,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
           {preview && <img src={preview.url} alt="Captured photo preview" className={`${styles.media} absolute inset-0`} />}
           {starting && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950"><LoaderCircle className="animate-spin text-blue-300" size={32} /><p className="text-sm text-white/70">Starting camera…</p></div>}
           {!preview && cameraReady && <>
+            {replacement && showOverlap && <div className={styles.retakeGuide} aria-hidden="true"><LocalCaptureImage file={replacement.original} alt="" className={styles.retakeImage} /><span>Original photo · align the same details</span></div>}
             {canCompare && showOverlap && <div className={styles.overlapGuide} aria-hidden="true"><LocalCaptureImage file={savedPhoto.file} alt="" className={styles.overlapImage} /><span>Previous photo edge</span></div>}
             {motionEnabled && <>
               <div className="pointer-events-none absolute inset-y-0 left-1/4 border-l border-dashed border-white/25" />
@@ -397,11 +399,11 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
 
         {!preview && <div className={styles.sessionBar} data-expanded={guideExpanded}>
           <div className={styles.sessionIntro}>
-            <p className={styles.stepLabel}>Step {stepIndex + 1}/7 · {rowCount}/{currentStep.target} guide shots</p>
+            <p className={styles.stepLabel}>{replacement ? "Retake · original capture row" : `Step ${stepIndex + 1}/7 · ${rowCount}/${currentStep.target} guide shots`}</p>
             {!motionEnabled && <button type="button" onClick={() => void enableMotionGuide()} className={styles.guideAction}><Compass size={15} />Angle guide</button>}
           </div>
           <div className={styles.captureTrack} aria-label="Capture sequence">{CAPTURE_STEPS.map((step, index) => <span key={step.id} data-active={index === stepIndex} data-done={(captureProgress[step.id] ?? 0) >= step.target} title={`${step.label}: ${captureProgress[step.id] ?? 0} shots`} />)}</div>
-          <p className={styles.currentRow}>{currentStep.label}</p>
+          <p className={styles.currentRow}>{replacement ? `${currentStep.label} · target ${Math.round(alignment.targetPitch)}°` : currentStep.label}</p>
           {onCaptureViewChange && <div className={styles.viewChoices} role="group" aria-label="Photo type">
             {CAPTURE_VIEWS.map((view) => <button key={view} type="button" disabled={saving} aria-pressed={captureView === view} onClick={() => { setCapturePhase("bridge"); setSavedMessage(""); onCaptureViewChange(view); }}>{CAPTURE_GUIDE[view].label}</button>)}
           </div>}
@@ -412,11 +414,11 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
           </div>}
           <p className={styles.captureTip}>{targetLabel} · aim for {alignment.targetPitch}°{captureView !== "around" && (phase === "bridge" ? " · keep wall detail in view" : phase === "ring" ? " · overlap the 30° row" : " · overlap the 60° row")}</p>
           <div className={styles.rowActions}>
-            <button type="button" className={styles.guideToggle} aria-expanded={guideExpanded} onClick={() => setGuideExpanded(!guideExpanded)}>{guideExpanded ? "Hide" : "Show"} row settings</button>
-            {canCompare && <button type="button" aria-pressed={showOverlap} onClick={() => setShowOverlap(!showOverlap)}>Overlap guide {showOverlap ? "on" : "off"}</button>}
+            <button type="button" hidden={!!replacement} className={styles.guideToggle} aria-expanded={guideExpanded} onClick={() => setGuideExpanded(!guideExpanded)}>{guideExpanded ? "Hide" : "Show"} row settings</button>
+            {(canCompare || replacement) && <button type="button" aria-pressed={showOverlap} onClick={() => setShowOverlap(!showOverlap)}>{replacement ? "Original overlay" : "Overlap guide"} {showOverlap ? "on" : "off"}</button>}
             {nextStep && onCaptureViewChange && <button type="button" disabled={saving} onClick={() => { setCapturePhase(nextStep.phase); setSavedMessage(""); onCaptureViewChange(nextStep.view); }}>Next row: {nextStep.label} →</button>}
           </div>
-          <p className={styles.captureCaution}>{replacement ? "The original stays in your set until you choose Replace photo." : atLimit ? "Photo limit reached. Review this set before generating." : "Counts guide your sequence, not verified coverage. Keep the lens fixed, move slowly, and keep shared detail between rows."}</p>
+          <p className={styles.captureCaution}>{replacement ? "Return to the original lens position. The original stays until you choose Replace photo." : atLimit ? "Photo limit reached. Review this set before generating." : "Counts guide your sequence, not verified coverage. Keep the lens fixed, move slowly, and keep shared detail between rows."}</p>
           {!isLandscape && <p className={styles.orientationNote}>Rotate your phone to landscape for a wider photo.</p>}
           <div className={styles.sessionNext}>
             <p role="status">{saving ? "Saving photo…" : replacement ? "Capture the same view, then review your replacement." : savedMessage || (savedCount < MIN_CAPTURE_IMAGES ? `${MIN_CAPTURE_IMAGES - savedCount} more photo${MIN_CAPTURE_IMAGES - savedCount === 1 ? "" : "s"} to reach the minimum` : onFinish ? "Ready to check and build your tour" : "Review photos to check the set")}</p>
