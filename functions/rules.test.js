@@ -1,13 +1,13 @@
 const test = require("node:test");
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require("@firebase/rules-unit-testing");
-const { doc, setDoc, getDoc, updateDoc, deleteDoc, Timestamp } = require("firebase/firestore");
+const { doc, setDoc, getDoc, updateDoc, deleteDoc, Timestamp, serverTimestamp } = require("firebase/firestore");
 const fs = require("node:fs");
 
 let env;
 const emulatorAvailable = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 test.before(async () => {
   if (!emulatorAvailable) return;
-  env = await initializeTestEnvironment({ projectId: "demo-libot", firestore: { rules: fs.readFileSync("../firestore.rules", "utf8") } });
+  env = await initializeTestEnvironment({ projectId: "demo-libot", firestore: { rules: fs.readFileSync(require("node:path").join(__dirname, "../firestore.rules"), "utf8") } });
   await env.withSecurityRulesDisabled(async context => {
     for (const [uid, role] of Object.entries({ 'buyer-1': 'buyer', 'buyer-2': 'buyer', 'broker-1': 'broker', 'broker-2': 'broker', 'admin-1': 'admin' })) {
       await setDoc(doc(context.firestore(), 'users', uid), { role, accountStatus: 'active' });
@@ -19,6 +19,19 @@ test.after(async () => { if (env) await env.cleanup(); });
 const db = (uid, token = {}) => env.authenticatedContext(uid, token).firestore();
 
 const ruleTest = emulatorAvailable ? test : test.skip;
+ruleTest("tour diagnostics are append-only, broker-authored and admin-readable", async () => {
+  const event = { brokerId: 'broker-1', sessionId: 'session-1', propertyId: 'p-1', level: 'error', message: 'Generation failed', detail: 'HTTP 500', page: '/broker/create-tour', browser: 'test', online: true, clientTime: new Date().toISOString(), createdAt: serverTimestamp() };
+  await assertSucceeds(setDoc(doc(db('broker-1'), 'tourLogs/event-1'), event));
+  await assertSucceeds(getDoc(doc(db('admin-1'), 'tourLogs/event-1')));
+  await assertFails(getDoc(doc(db('broker-1'), 'tourLogs/event-1')));
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'tourLogs/event-1')));
+  await assertFails(setDoc(doc(db('buyer-1'), 'tourLogs/buyer-event'), { ...event, brokerId: 'buyer-1' }));
+  await assertFails(setDoc(doc(db('broker-2'), 'tourLogs/spoof-event'), event));
+  await assertFails(setDoc(doc(db('broker-1'), 'tourLogs/large-event'), { ...event, detail: 'x'.repeat(12001) }));
+  await assertFails(setDoc(doc(db('broker-1'), 'tourLogs/extra-event'), { ...event, token: 'secret' }));
+  await assertFails(updateDoc(doc(db('broker-1'), 'tourLogs/event-1'), { message: 'changed' }));
+  await assertFails(deleteDoc(doc(db('admin-1'), 'tourLogs/event-1')));
+});
 ruleTest("owners can edit settings but cannot grant privileges", async () => {
   await assertSucceeds(updateDoc(doc(db("buyer-1"), "users/buyer-1"), { settings: { listings: true } }));
   await assertSucceeds(getDoc(doc(db("buyer-1"), "users/buyer-1")));

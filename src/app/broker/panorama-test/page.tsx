@@ -26,6 +26,7 @@ import PanoramaViewer from "@/components/PanoramaViewer";
 import PhoneCameraCapture from "@/components/PhoneCameraCapture";
 import CapturedPhotoPreview, { LocalCaptureImage } from "@/components/CapturedPhotoPreview";
 import { auth, db } from "@/lib/firebase";
+import { recordTourLog } from "@/lib/tour-logs";
 import { HttpResponseError, readJsonResponse } from "@/lib/http-response";
 import { formatCaptureDiagnostic, sanitizeDiagnosticText, type CaptureDiagnosticContext } from "@/lib/capture-diagnostics";
 import { cachedPromise, mapWithConcurrency } from "@/lib/promise-cache";
@@ -128,6 +129,9 @@ export default function CreateVirtualTourPage() {
   const publishingRef = useRef(false);
   const devLogIdRef = useRef(0);
   const logListRef = useRef<HTMLDivElement>(null);
+  const logPropertyRef = useRef("");
+
+  useEffect(() => { logPropertyRef.current = selectedProperty; }, [selectedProperty]);
 
   useEffect(() => {
     if (panorama) document.getElementById("generated-tour-preview")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -139,6 +143,7 @@ export default function CreateVirtualTourPage() {
   }, [devLogs, devLogsOpen]);
 
   const addDevLog = useCallback((level: DevLogEntry["level"], message: string, detail?: string) => {
+    recordTourLog(level, message, detail, logPropertyRef.current);
     if (!debugLogsEnabled) return;
     const entry = { id: ++devLogIdRef.current, time: new Date().toLocaleTimeString(), level, message: sanitizeDiagnosticText(message), detail: detail ? sanitizeDiagnosticText(detail) : undefined };
     setDevLogs((previous) => [...previous.slice(-79), entry]);

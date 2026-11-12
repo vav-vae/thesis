@@ -42,9 +42,10 @@ import {
 import { auth, db } from "@/lib/firebase";
 import { isRemoteImageUrl, uploadImageToCloudinary } from "@/lib/cloudinary";
 import SafeImage from "@/components/SafeImage";
+import TourLogMonitor from "@/components/TourLogMonitor";
 import styles from "./dashboard.module.css";
 
-type AdminSection = "dashboard" | "buyers" | "brokers" | "verification" | "properties" | "reports" | "profile";
+type AdminSection = "dashboard" | "buyers" | "brokers" | "verification" | "properties" | "reports" | "tourLogs" | "profile";
 type VerificationStatus = "pending" | "verified" | "rejected";
 
 type AdminNotification = {
@@ -131,6 +132,7 @@ const navigation: Array<{ id: AdminSection; label: string; icon: LucideIcon }> =
   { id: "verification", label: "Broker Verification", icon: ClipboardCheck },
   { id: "properties", label: "Property Listings", icon: House },
   { id: "reports", label: "Reports", icon: Flag },
+  { id: "tourLogs", label: "Virtual Tour Logs", icon: Camera },
   { id: "profile", label: "Profile", icon: CircleUserRound },
 ];
 
@@ -546,6 +548,7 @@ export default function AdminPage() {
           {section === "properties" && <PropertyManagement properties={properties} onView={setSelectedProperty} onToggleArchive={togglePropertyArchive} onRemove={removeProperty} actionId={actionId} />}
           {section === "reports" && <ReportManagement reports={reports} users={users} actionId={actionId} onStatus={requestReportStatus} onDeactivate={deactivateReportedUser} />}
           {section === "profile" && <AdminProfile admin={admin} onUpdate={setAdmin} />}
+          {section === "tourLogs" && <TourLogMonitor />}
         </div>
       </main>
 

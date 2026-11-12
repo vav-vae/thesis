@@ -346,6 +346,32 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Append-only broker diagnostics. Only administrators can inspect events.
+    match /tourLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isActive() && isBroker()
+        && request.resource.data.keys().hasAll([
+          'brokerId', 'sessionId', 'propertyId', 'level', 'message', 'detail',
+          'page', 'browser', 'online', 'clientTime', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'brokerId', 'sessionId', 'propertyId', 'level', 'message', 'detail',
+          'page', 'browser', 'online', 'clientTime', 'createdAt'
+        ])
+        && request.resource.data.brokerId == request.auth.uid
+        && request.resource.data.sessionId is string && request.resource.data.sessionId.size() <= 128
+        && request.resource.data.propertyId is string && request.resource.data.propertyId.size() <= 128
+        && request.resource.data.level in ['info', 'error']
+        && request.resource.data.message is string && request.resource.data.message.size() <= 1000
+        && request.resource.data.detail is string && request.resource.data.detail.size() <= 12000
+        && request.resource.data.page is string && request.resource.data.page.size() <= 256
+        && request.resource.data.browser is string && request.resource.data.browser.size() <= 512
+        && request.resource.data.online is bool
+        && request.resource.data.clientTime is string && request.resource.data.clientTime.size() <= 64
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
     /*
      * DENY EVERYTHING NOT EXPLICITLY ALLOWED
      */
