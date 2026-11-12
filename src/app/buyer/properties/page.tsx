@@ -35,6 +35,7 @@ import AppLogo from "@/components/AppLogo";
 import searchStyles from "./search.module.css";
 import { matchesLocation, matchesPropertySearch } from "@/lib/property-search";
 import { isPublishedTour } from "@/lib/published-tour";
+import { loadTourSummaries } from "@/lib/tour-summaries";
 import { isBrowsableProperty } from "@/lib/property-visibility";
 
 interface Property {
@@ -99,7 +100,7 @@ function BuyerPropertiesContent() {
         const [propertySnapshot, profileSnapshot, tourSnapshot] = await Promise.all([
           getDocs(collection(db, "properties")),
           user ? getDoc(doc(db, "users", user.uid)) : Promise.resolve(null),
-          getDocs(collection(db, "roomTours")),
+          loadTourSummaries(String(db.app.options.projectId)),
         ]);
 
         const propertyList: Property[] = [];
@@ -116,7 +117,7 @@ function BuyerPropertiesContent() {
         });
 
         const imageLookup = new Map<string, string>();
-        const propertyIds = propertyList.map((property) => property.id);
+        const propertyIds = propertyList.filter((property) => !isRemoteImageUrl(property.image)).map((property) => property.id);
         const chunks = Array.from({ length: Math.ceil(propertyIds.length / 30) }, (_, index) => propertyIds.slice(index * 30, index * 30 + 30));
         const roomSnapshots = await Promise.all(chunks.map((ids) => getDocs(query(collection(db, "roomImages"), where("propertyId", "in", ids)))))
           .catch((roomImageError) => {
@@ -136,7 +137,7 @@ function BuyerPropertiesContent() {
           ...property,
           image: isRemoteImageUrl(property.image) ? property.image : imageLookup.get(property.id),
         })));
-        setTourPropertyIds(new Set(tourSnapshot.docs.filter((item) => isPublishedTour(item.data())).map((item) => String(item.data().propertyId))));
+        setTourPropertyIds(new Set(tourSnapshot.filter(isPublishedTour).map((item) => String(item.propertyId))));
         const discovery = profileSnapshot?.data()?.settings?.discovery;
         if (discovery && !window.location.search) {
           setLocationFilter(String(discovery.location ?? ""));

@@ -22,6 +22,7 @@ import {
 
 import PanoramaViewer from "@/components/PanoramaViewer";
 import { auth, db } from "@/lib/firebase";
+import { invalidateTourSummaries } from "@/lib/tour-summaries";
 
 type Metrics = {
   algorithm?: string;
@@ -108,6 +109,7 @@ export default function VirtualToursPage() {
     setWorkingId(tour.id); setError("");
     try {
       await updateDoc(doc(db, "roomTours", tour.id), { status: (tour.status ?? "published") === "published" ? "unpublished" : "published", updatedAt: serverTimestamp() });
+      invalidateTourSummaries(String(db.app.options.projectId));
     } catch (statusError) {
       console.error("Unable to change tour status:", statusError);
       setError("The tour status could not be changed.");
@@ -133,6 +135,7 @@ export default function VirtualToursPage() {
     setWorkingId(deleting.id); setError("");
     try {
       await deleteDoc(doc(db, "roomTours", deleting.id));
+      invalidateTourSummaries(String(db.app.options.projectId));
       if (preview?.id === deleting.id) setPreview(null);
       setDeleting(null);
     } catch (deleteError) {

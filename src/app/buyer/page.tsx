@@ -22,6 +22,7 @@ import SafeImage from "@/components/SafeImage";
 import BuyerAccountMenu from "@/components/BuyerAccountMenu";
 import styles from "./dashboard.module.css";
 import { isPublishedTour } from "@/lib/published-tour";
+import { loadTourSummaries } from "@/lib/tour-summaries";
 import { isBrowsableProperty } from "@/lib/property-visibility";
 
 type RecentProperty = {
@@ -141,11 +142,12 @@ export default function BuyerDashboard() {
       try {
         const [allProperties, tours] = await Promise.all([
           getDocs(collection(db, "properties")),
-          getDocs(collection(db, "roomTours")),
+          loadTourSummaries(String(db.app.options.projectId)),
         ]);
         const listings = allProperties.docs.filter((item) => isBrowsableProperty(item.data()))
           .map((item) => ({ id: item.id, ...item.data() } as FeaturedProperty));
-        const chunks = Array.from({ length: Math.ceil(listings.length / 30) }, (_, index) => listings.slice(index * 30, index * 30 + 30).map((item) => item.id));
+        const missingCovers = listings.filter((item) => !isRemoteImageUrl(item.image));
+        const chunks = Array.from({ length: Math.ceil(missingCovers.length / 30) }, (_, index) => missingCovers.slice(index * 30, index * 30 + 30).map((item) => item.id));
         const covers = new Map<string, string>();
         const roomSnapshots = await Promise.all(chunks.map((ids) => getDocs(query(collection(db, "roomImages"), where("propertyId", "in", ids)))))
           .catch(() => []);
@@ -156,7 +158,7 @@ export default function BuyerDashboard() {
         }));
         if (!cancelled) {
           setFeaturedProperties(listings.map((item) => ({ ...item, image: isRemoteImageUrl(item.image) ? item.image : covers.get(item.id) })));
-          setTourPropertyIds(new Set(tours.docs.filter((item) => isPublishedTour(item.data())).map((item) => String(item.data().propertyId))));
+          setTourPropertyIds(new Set(tours.filter(isPublishedTour).map((item) => String(item.propertyId))));
         }
       } catch (error) {
         console.error("Unable to load dashboard listings:", error);

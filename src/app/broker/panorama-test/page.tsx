@@ -28,6 +28,7 @@ import CapturedPhotoPreview, { LocalCaptureImage } from "@/components/CapturedPh
 import { auth, db } from "@/lib/firebase";
 import { useTourGenerationJob } from "@/hooks/useTourGenerationJob";
 import { recordTourLog } from "@/lib/tour-logs";
+import { invalidateTourSummaries } from "@/lib/tour-summaries";
 import { HttpResponseError, readJsonResponse } from "@/lib/http-response";
 import { formatCaptureDiagnostic, sanitizeDiagnosticText, type CaptureDiagnosticContext } from "@/lib/capture-diagnostics";
 import { cachedPromise, mapWithConcurrency } from "@/lib/promise-cache";
@@ -553,6 +554,7 @@ export default function CreateVirtualTourPage() {
         await addDoc(collection(db, "roomTours"), { ...tourData, createdAt: serverTimestamp() });
       }
       setPublished(true);
+      invalidateTourSummaries(String(db.app.options.projectId));
       tourJob.clear();
       addDevLog("info", "Room tour published successfully.");
     } catch (publishError) {

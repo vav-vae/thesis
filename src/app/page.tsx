@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { ArrowRight, PlayCircle, Search } from "lucide-react";
 import { db } from "@/lib/firebase";
@@ -9,11 +10,13 @@ import { isRemoteImageUrl } from "@/lib/cloudinary";
 import SafeImage from "@/components/SafeImage";
 import AppLogo from "@/components/AppLogo";
 import { isPublishedTour } from "@/lib/published-tour";
+import { loadTourSummaries } from "@/lib/tour-summaries";
 import { isBrowsableProperty } from "@/lib/property-visibility";
 
 type Featured = { id: string; title?: string; location?: string; price?: string; image?: string };
 
 export default function HomePage() {
+  const router = useRouter();
   const [location, setLocation] = useState("");
   const [type, setType] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
@@ -25,10 +28,10 @@ export default function HomePage() {
     async function load() {
       try {
         const [tours, properties] = await Promise.all([
-          getDocs(collection(db, "roomTours")),
+          loadTourSummaries(String(db.app.options.projectId)),
           getDocs(collection(db, "properties")),
         ]);
-        const ids = new Set(tours.docs.filter((item) => isPublishedTour(item.data())).map((item) => String(item.data().propertyId)));
+        const ids = new Set(tours.filter(isPublishedTour).map((item) => String(item.propertyId)));
         const listings = properties.docs.filter((item) => isBrowsableProperty(item.data()) && ids.has(item.id)).slice(0, 3).map((item) => ({ id: item.id, ...item.data() } as Featured));
         const covers = await Promise.all(listings.map(async (item) => {
           if (isRemoteImageUrl(item.image)) return item;
@@ -57,7 +60,7 @@ export default function HomePage() {
     if (location.trim()) params.set("location", location.trim());
     if (type) params.set("type", type);
     if (maxPrice) params.set("maxPrice", maxPrice);
-    window.location.assign(`/buyer/properties${params.size ? `?${params}` : ""}`);
+    router.push(`/buyer/properties${params.size ? `?${params}` : ""}`);
   };
 
   return <main className="min-h-screen bg-[#faf8f3]">

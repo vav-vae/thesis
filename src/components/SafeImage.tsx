@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import Image from "next/image";
+import { listingImageSrcSet, listingImageUrl } from "@/lib/listing-image";
 
 type SafeImageProps = {
   src: string;
@@ -34,7 +35,9 @@ export default function SafeImage({
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={src}
+        src={listingImageUrl(src, 960)}
+        srcSet={listingImageSrcSet(src)}
+        sizes={sizes ?? "100vw"}
         alt={alt}
         className={`absolute inset-0 h-full w-full ${className ?? ""}`}
         decoding="async"
@@ -47,7 +50,9 @@ export default function SafeImage({
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={src}
+      src={listingImageUrl(src, width ?? 800)}
+      srcSet={listingImageSrcSet(src)}
+      sizes={sizes ?? `${width ?? 800}px`}
       alt={alt}
       width={width}
       height={height}
