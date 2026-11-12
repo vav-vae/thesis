@@ -2,7 +2,6 @@ export type CaptureView = "around" | "top" | "bottom";
 export type CapturePhase = "bridge" | "ring" | "pole";
 
 export const MIN_CAPTURE_IMAGES = 6;
-export const MAX_CAPTURE_IMAGES = 64;
 export const CAPTURE_STEPS = [
   { id: "around:ring", view: "around", phase: "ring", label: "Walls · level", target: 12 },
   { id: "top:bridge", view: "top", phase: "bridge", label: "Ceiling bridge · +30°", target: 12 },

@@ -611,32 +611,39 @@ class RemoteImageSecurityTests(unittest.IsolatedAsyncioTestCase):
             await self.read_with_handler([cloudinary_source_url(name) for name in ("bad", "slow1", "slow2")], handler)
         self.assertEqual(len(cancelled), 2)
 
-    async def test_64_remote_photos_are_resized_to_the_existing_batch_budget(self):
+    async def test_large_remote_sets_are_resized_to_the_existing_batch_budget(self):
         output = BytesIO()
         Image.new("RGB", (320, 240), (100, 120, 140)).save(output, format="JPEG")
         body = output.getvalue()
-        urls = [cloudinary_source_url(f"large-set-{index}") for index in range(64)]
+        urls = [cloudinary_source_url(f"large-set-{index}") for index in range(100)]
         progress = []
         def handler(request):
             return streaming_response(body, content_type="image/jpeg")
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             with patch.object(main_module, "MAX_TOTAL_PIXELS", 1_500_000):
                 images, names = await read_remote_images(urls, TEST_USER_ID, client=client, on_progress=progress.append)
-        self.assertEqual(len(images), 64)
-        self.assertEqual(len(names), 64)
+        self.assertEqual(len(images), 100)
+        self.assertEqual(len(names), 100)
         self.assertLessEqual(sum(image.shape[0] * image.shape[1] for image in images), 1_500_000)
         self.assertTrue(all(image.shape[1] < 320 for image in images))
-        self.assertEqual(progress[-1], "Downloading and preparing photo 64 of 64")
+        self.assertEqual(progress[-1], "Downloading and preparing photo 100 of 100")
 
-    async def test_excess_photo_count_is_rejected_before_downloading(self):
+    async def test_empty_photo_set_is_rejected_before_downloading(self):
         def handler(request):
-            self.fail("An oversized capture set must not start downloads")
+            self.fail("An empty capture set must not start downloads")
         with self.assertRaises(main_module.HTTPException) as failure:
-            await self.read_with_handler([cloudinary_source_url(f"source-{index}") for index in range(65)], handler)
+            await self.read_with_handler([], handler)
         self.assertEqual(failure.exception.status_code, 422)
 
+    def test_job_model_accepts_large_sets_and_still_requires_six_photos(self):
+        payload = {"image_urls": [cloudinary_source_url(str(index)) for index in range(100)], "property_id": "p-1", "room_type": "Room"}
+        self.assertEqual(len(main_module.RemoteJobRequest(**payload).image_urls), 100)
+        payload["image_urls"] = payload["image_urls"][:5]
+        with self.assertRaises(ValueError):
+            main_module.RemoteJobRequest(**payload)
+
     def test_full_size_phone_capture_sets_keep_every_photo_under_100_million_pixels(self):
-        for count in (50, 53, 60, 64):
+        for count in (50, 53, 60, 64, 65, 100, 200):
             size = main_module.panorama_working_size(1600, 1200, 100_000_000 // count)
             self.assertLessEqual(size[0] * size[1] * count, 100_000_000)
             self.assertAlmostEqual(size[0] / size[1], 4 / 3, places=2)

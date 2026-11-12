@@ -32,7 +32,7 @@ import { invalidateTourSummaries } from "@/lib/tour-summaries";
 import { HttpResponseError, readJsonResponse } from "@/lib/http-response";
 import { formatCaptureDiagnostic, sanitizeDiagnosticText, type CaptureDiagnosticContext } from "@/lib/capture-diagnostics";
 import { cachedPromise, mapWithConcurrency } from "@/lib/promise-cache";
-import { CAPTURE_GUIDE, CAPTURE_VIEWS, MIN_CAPTURE_IMAGES, MAX_CAPTURE_IMAGES, captureStepId, type CaptureShotContext, type CaptureStepId, type CaptureView } from "@/lib/capture-guide";
+import { CAPTURE_GUIDE, CAPTURE_VIEWS, MIN_CAPTURE_IMAGES, captureStepId, type CaptureShotContext, type CaptureStepId, type CaptureView } from "@/lib/capture-guide";
 import {
   isRemoteImageUrl,
   uploadImageToCloudinary,
@@ -372,10 +372,6 @@ export default function CreateVirtualTourPage() {
     selectedRansacThreshold: number = ransacThreshold,
     deferRemoteValidation = false,
   ) => {
-    if (selected.length > MAX_CAPTURE_IMAGES) {
-      setError(`Use at most ${MAX_CAPTURE_IMAGES} photos per room. Remove unwanted photos before adding more.`);
-      return;
-    }
     setCaptureShots((previous) => new Map([...previous].filter(([file]) => selected.includes(file))));
     addDevLog("info", `Capture set updated: ${selected.length} image${selected.length === 1 ? "" : "s"}.`);
     const revision = workflowRevisionRef.current + 1;
@@ -430,7 +426,6 @@ export default function CreateVirtualTourPage() {
 
   const addCapture = async (file?: File, deferRemoteValidation = false) => {
     if (!file) return false;
-    if (filesRef.current.length >= MAX_CAPTURE_IMAGES) throw new Error("64 photos saved. Remove an unwanted photo before adding more.");
     const inspected = await cachedPromise(inspectionCacheRef.current, file, () => inspectImage(file));
     const blockingIssue = inspected.issues.find((issue) => issue.severity === "error");
     if (blockingIssue) {
@@ -673,7 +668,7 @@ export default function CreateVirtualTourPage() {
             <div className="border-y border-slate-200 bg-slate-50/60 p-6 sm:p-8">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Step 2</p>
               <h2 className="mt-2 text-xl font-semibold">Capture around, top, and bottom</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">Start with a full circle of level views, then add overlapping ceiling and floor views. Use at least 6 landscape photos. Use up to 64 photos per room; larger sets take longer and remain subject to processing-size limits. In live capture, take consecutive photos and switch between walls, ceiling, and floor without closing the camera. Tap Finish &amp; generate to create the tour, or Done to review and check the photos first.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">Start with a full circle of level views, then add overlapping ceiling and floor views. Use at least 6 landscape photos. There is no fixed photo-count limit. Larger sets take longer and remain subject to processing-size limits. In live capture, take consecutive photos and switch between walls, ceiling, and floor without closing the camera. Tap Finish &amp; generate to create the tour, or Done to review and check the photos first.</p>
               <div className="mt-5 grid gap-2 sm:grid-cols-3" role="group" aria-label="Next photo type">
                 {CAPTURE_VIEWS.map((view) => <button key={view} type="button" aria-pressed={captureView === view} disabled={validating || generating || publishing} onClick={() => setCaptureView(view)} className={`rounded-xl border p-3 text-left disabled:opacity-50 ${captureView === view ? "border-blue-300 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white"}`}><p className="text-sm font-semibold">{CAPTURE_GUIDE[view].label}</p><p className="mt-1 text-xs text-slate-500">{sourceCaptureViews.filter((item) => item === view).length} photos added</p></button>)}
               </div>

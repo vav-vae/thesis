@@ -73,7 +73,6 @@ MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_TOTAL_BYTES = 120 * 1024 * 1024
 MAX_IMAGE_PIXELS = int(os.getenv("PANORAMA_MAX_IMAGE_PIXELS", "12500000"))
 MAX_TOTAL_PIXELS = int(os.getenv("PANORAMA_MAX_TOTAL_IMAGE_PIXELS", "100000000"))
-MAX_REMOTE_IMAGES = 64
 PANORAMA_WORKING_MAX_DIMENSION = 1600
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -142,7 +141,6 @@ class RemoteHybridRequest(BaseModel):
 
 
 class RemoteJobRequest(RemoteHybridRequest):
-    image_urls: list[str] = Field(min_length=6, max_length=64)
     property_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     room_type: str = Field(min_length=1, max_length=120)
 
@@ -440,8 +438,8 @@ async def read_remote_images(
     client: httpx.AsyncClient | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> tuple[list[np.ndarray], list[str]]:
-    if not image_urls or len(image_urls) > MAX_REMOTE_IMAGES:
-        raise HTTPException(422, f"Provide between 1 and {MAX_REMOTE_IMAGES} source photos per room.")
+    if not image_urls:
+        raise HTTPException(422, "Provide at least one source photo.")
     if len(set(image_urls)) != len(image_urls):
         raise HTTPException(status_code=422, detail="Source image URLs must be unique.")
 

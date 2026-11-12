@@ -92,7 +92,7 @@ class PanoramaJobTests(unittest.IsolatedAsyncioTestCase):
         worker_entered = asyncio.Event()
         finish = asyncio.Event()
         identifier = str(uuid4())
-        payload = {"image_urls": [f"https://example.com/{i}.jpg" for i in range(6)], "property_id": "p-1", "room_type": "Living room"}
+        payload = {"image_urls": [f"https://example.com/{i}.jpg" for i in range(100)], "property_id": "p-1", "room_type": "Living room"}
         calls = 0
         async def reconstruct(*args, **kwargs):
             nonlocal calls

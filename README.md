@@ -39,7 +39,7 @@ of waiting indefinitely. This provides recovery from phone disconnections, not
 automatic recovery from a killed compute worker. Server job events also appear
 in Admin → Virtual Tour Logs while the phone is disconnected.
 
-Each room job accepts up to 64 source photos. Remote sources are resized during
+Room jobs have no fixed photo-count limit. Remote sources are resized during
 loading to share the existing 100-million-pixel working budget, with a maximum
 long edge of 1600 pixels. Every photo is retained; original source-dimension,
 download-size, ownership, and decoding safety checks still apply.
