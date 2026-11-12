@@ -458,7 +458,7 @@ async def read_remote_images(
             ),
             follow_redirects=False,
             trust_env=False,
-            limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
+            limits=httpx.Limits(max_connections=3, max_keepalive_connections=3),
         )
 
     images: list[np.ndarray] = []
@@ -469,105 +469,123 @@ async def read_remote_images(
     # 1600x1200 captures exceeded 100M pixels before the stitcher could resize.
     working_pixel_limit = MAX_TOTAL_PIXELS // len(validated_urls)
     batch_deadline = time.monotonic() + MAX_REMOTE_BATCH_SECONDS
+    downloaded_bytes = 0
+
+    async def download_photo(index, image_url):
+        nonlocal downloaded_bytes
+        label = f"Remote image {index}"
+        remaining_batch_seconds = batch_deadline - time.monotonic()
+        if remaining_batch_seconds <= 0:
+            raise HTTPException(
+                status_code=504,
+                detail="The remote image batch timed out.",
+            )
+        try:
+            async with asyncio.timeout(
+                min(MAX_REMOTE_DOWNLOAD_SECONDS, remaining_batch_seconds)
+            ):
+                async with client.stream(
+                    "GET",
+                    image_url,
+                    headers={
+                        "Accept": "image/jpeg,image/png,image/webp",
+                        "Accept-Encoding": "identity",
+                        "User-Agent": "LiBot-Panorama-Processor/1.0",
+                    },
+                ) as response:
+                    if response.status_code != 200:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"{label} could not be retrieved from image storage.",
+                        )
+                    if response.headers.get("x-cld-error"):
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"{label} could not be retrieved from image storage.",
+                        )
+                    content_encoding = response.headers.get(
+                        "content-encoding", "identity"
+                    ).strip().lower()
+                    if content_encoding not in {"", "identity"}:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"{label} returned unsupported storage encoding.",
+                        )
+                    declared_type = (
+                        response.headers.get("content-type", "")
+                        .split(";", 1)[0]
+                        .strip()
+                        .lower()
+                    )
+                    if declared_type not in ALLOWED_IMAGE_CONTENT_TYPES:
+                        raise HTTPException(
+                            status_code=415,
+                            detail=f"{label} is not a supported image.",
+                        )
+                    declared_length = response.headers.get("content-length")
+                    if declared_length:
+                        try:
+                            expected_bytes = int(declared_length)
+                        except ValueError as error:
+                            raise HTTPException(
+                                status_code=502,
+                                detail=f"{label} returned invalid storage metadata.",
+                            ) from error
+                        if (
+                            expected_bytes < 0
+                            or expected_bytes > MAX_FILE_BYTES
+                            or expected_bytes > MAX_TOTAL_BYTES - downloaded_bytes
+                        ):
+                            raise HTTPException(
+                                status_code=413,
+                                detail=f"{label} exceeds the remote-download limit.",
+                            )
+
+                    contents = bytearray()
+                    async for chunk in response.aiter_raw(chunk_size=64 * 1024):
+                        downloaded_bytes += len(chunk)
+                        contents.extend(chunk)
+                        if (
+                            len(contents) > MAX_FILE_BYTES
+                            or downloaded_bytes > MAX_TOTAL_BYTES
+                        ):
+                            raise HTTPException(
+                                status_code=413,
+                                detail=f"{label} exceeds the remote-download limit.",
+                            )
+        except TimeoutError as error:
+            raise HTTPException(
+                status_code=504,
+                detail=f"{label} timed out while downloading.",
+            ) from error
+        except httpx.TimeoutException as error:
+            raise HTTPException(
+                status_code=504,
+                detail=f"{label} timed out while downloading.",
+            ) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"{label} could not be retrieved from image storage.",
+            ) from error
+
+        return bytes(contents), declared_type
+
+    # Retain at most three pending photo bodies. Decoding stays ordered so the
+    # existing combined pixel/byte budgets and source numbering are unchanged.
+    pending = {}
+    for offset in range(min(3, len(validated_urls))):
+        pending[offset] = asyncio.create_task(download_photo(offset + 1, validated_urls[offset]))
     try:
-        for index, image_url in enumerate(validated_urls, start=1):
+        for offset, image_url in enumerate(validated_urls):
+            index = offset + 1
             label = f"Remote image {index}"
             if on_progress:
                 on_progress(f"Downloading and preparing photo {index} of {len(validated_urls)}")
-            remaining_batch_seconds = batch_deadline - time.monotonic()
-            if remaining_batch_seconds <= 0:
-                raise HTTPException(
-                    status_code=504,
-                    detail="The remote image batch timed out.",
-                )
-            try:
-                async with asyncio.timeout(
-                    min(MAX_REMOTE_DOWNLOAD_SECONDS, remaining_batch_seconds)
-                ):
-                    async with client.stream(
-                        "GET",
-                        image_url,
-                        headers={
-                            "Accept": "image/jpeg,image/png,image/webp",
-                            "Accept-Encoding": "identity",
-                            "User-Agent": "LiBot-Panorama-Processor/1.0",
-                        },
-                    ) as response:
-                        if response.status_code != 200:
-                            raise HTTPException(
-                                status_code=502,
-                                detail=f"{label} could not be retrieved from image storage.",
-                            )
-                        if response.headers.get("x-cld-error"):
-                            raise HTTPException(
-                                status_code=502,
-                                detail=f"{label} could not be retrieved from image storage.",
-                            )
-                        content_encoding = response.headers.get(
-                            "content-encoding", "identity"
-                        ).strip().lower()
-                        if content_encoding not in {"", "identity"}:
-                            raise HTTPException(
-                                status_code=502,
-                                detail=f"{label} returned unsupported storage encoding.",
-                            )
-                        declared_type = (
-                            response.headers.get("content-type", "")
-                            .split(";", 1)[0]
-                            .strip()
-                            .lower()
-                        )
-                        if declared_type not in ALLOWED_IMAGE_CONTENT_TYPES:
-                            raise HTTPException(
-                                status_code=415,
-                                detail=f"{label} is not a supported image.",
-                            )
-                        declared_length = response.headers.get("content-length")
-                        if declared_length:
-                            try:
-                                expected_bytes = int(declared_length)
-                            except ValueError as error:
-                                raise HTTPException(
-                                    status_code=502,
-                                    detail=f"{label} returned invalid storage metadata.",
-                                ) from error
-                            if (
-                                expected_bytes < 0
-                                or expected_bytes > MAX_FILE_BYTES
-                                or expected_bytes > MAX_TOTAL_BYTES - total_bytes
-                            ):
-                                raise HTTPException(
-                                    status_code=413,
-                                    detail=f"{label} exceeds the remote-download limit.",
-                                )
-
-                        contents = bytearray()
-                        async for chunk in response.aiter_raw(chunk_size=64 * 1024):
-                            contents.extend(chunk)
-                            if (
-                                len(contents) > MAX_FILE_BYTES
-                                or len(contents) > MAX_TOTAL_BYTES - total_bytes
-                            ):
-                                raise HTTPException(
-                                    status_code=413,
-                                    detail=f"{label} exceeds the remote-download limit.",
-                                )
-            except TimeoutError as error:
-                raise HTTPException(
-                    status_code=504,
-                    detail=f"{label} timed out while downloading.",
-                ) from error
-            except httpx.TimeoutException as error:
-                raise HTTPException(
-                    status_code=504,
-                    detail=f"{label} timed out while downloading.",
-                ) from error
-            except httpx.HTTPError as error:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"{label} could not be retrieved from image storage.",
-                ) from error
-
+            contents, declared_type = await pending.pop(offset)
+            next_offset = offset + 3
+            if next_offset < len(validated_urls):
+                pending[next_offset] = asyncio.create_task(download_photo(next_offset + 1, validated_urls[next_offset]))
             image, byte_count, pixel_count = await decode_image_contents(
                 bytes(contents),
                 label,
@@ -584,6 +602,9 @@ async def read_remote_images(
             images.append(image)
             filenames.append(f"Remote image {index}")
     finally:
+        for task in pending.values():
+            task.cancel()
+        await asyncio.gather(*pending.values(), return_exceptions=True)
         if owns_client:
             await client.aclose()
 

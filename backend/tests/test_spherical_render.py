@@ -2,12 +2,27 @@ import unittest
 from unittest.mock import patch
 import cv2
 import numpy as np
-from backend.services.spherical import _render_spherical_photos, prepare_spherical_matches
+from backend.services.spherical import _blend_source_seams, _render_spherical_photos, prepare_spherical_matches
 from backend.services.panorama_service import _detector_and_norm
 from backend.tests.test_spherical import camera_sweep
 
 
 class SphericalRenderTests(unittest.TestCase):
+    def test_cropped_blending_preserves_full_region_output(self):
+        random = np.random.default_rng(7)
+        images = [random.integers(10, 245, (240, 320, 3), np.uint8) for _ in range(3)]
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 180., 1., 160., 120.
+        rotations = [cv2.Rodrigues(np.float64([0, yaw, 0]))[0].astype(np.float32) for yaw in (-.4, 0, .4)]
+        arguments = (images, [camera] * 3, rotations, 1536, 768)
+        reference_blend = lambda *args, **kwargs: _blend_source_seams(*args, **kwargs, bounded=False)
+        with patch('backend.services.spherical._blend_source_seams', side_effect=reference_blend):
+            reference, reference_evidence, _ = _render_spherical_photos(*arguments, seam_aware=True)
+        cropped, evidence, _ = _render_spherical_photos(*arguments, seam_aware=True)
+        np.testing.assert_array_equal(evidence, reference_evidence)
+        difference = np.abs(cropped.astype(np.int16) - reference.astype(np.int16))
+        self.assertLessEqual(int(difference.max()), 1)
+
     def test_multiband_failure_keeps_real_source_pixels_and_reports_fallback(self):
         camera = cv2.detail.CameraParams()
         camera.focal, camera.aspect, camera.ppx, camera.ppy = 80., 1., 60., 45.

@@ -557,6 +557,60 @@ class ApiSecurityIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RemoteImageSecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_download_prefetch_is_bounded_and_keeps_photo_order(self):
+        active = peak = 0
+        completed = []
+        bodies = []
+        for index in range(7):
+            output = BytesIO()
+            Image.new("RGB", (120, 100), (index * 30, 40, 90)).save(output, format="PNG")
+            bodies.append(output.getvalue())
+
+        async def handler(request):
+            nonlocal active, peak
+            index = int(request.url.path.rsplit("/", 1)[-1].split(".")[0])
+            active += 1
+            peak = max(peak, active)
+            try:
+                await asyncio.sleep(.03 if index == 0 else .005)
+                completed.append(index)
+                return streaming_response(bodies[index], content_type="image/png")
+            finally:
+                active -= 1
+
+        urls = [cloudinary_source_url(str(index), extension="png") for index in range(7)]
+        images, names = await self.read_with_handler(urls, handler)
+        self.assertEqual(peak, 3)
+        self.assertNotEqual(completed[0], 0)
+        self.assertEqual(names, [f"Remote image {index + 1}" for index in range(7)])
+        self.assertEqual([int(image[0, 0, 2]) for image in images], [index * 30 for index in range(7)])
+
+    async def test_parallel_downloads_share_the_streamed_byte_budget(self):
+        async def handler(_request):
+            await asyncio.sleep(.001)
+            return httpx.Response(200, headers={"Content-Type": "image/jpeg"}, stream=ChunkedBytesStream(b"a" * 40))
+
+        with patch.object(main_module, "MAX_TOTAL_BYTES", 100), patch.object(main_module, "decode_image_contents", new=AsyncMock(return_value=(np.zeros((1, 1, 3), np.uint8), 40, 1))):
+            with self.assertRaises(main_module.HTTPException) as failure:
+                await self.read_with_handler([cloudinary_source_url(str(index)) for index in range(3)], handler)
+        self.assertEqual(failure.exception.status_code, 413)
+
+    async def test_failed_download_cancels_pending_requests(self):
+        cancelled = []
+
+        async def handler(request):
+            if request.url.path.endswith("bad.jpg"):
+                await asyncio.sleep(.01)
+                return httpx.Response(502)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(str(request.url))
+
+        with self.assertRaises(main_module.HTTPException):
+            await self.read_with_handler([cloudinary_source_url(name) for name in ("bad", "slow1", "slow2")], handler)
+        self.assertEqual(len(cancelled), 2)
+
     async def test_64_remote_photos_are_resized_to_the_existing_batch_budget(self):
         output = BytesIO()
         Image.new("RGB", (320, 240), (100, 120, 140)).save(output, format="JPEG")

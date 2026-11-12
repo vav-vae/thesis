@@ -462,7 +462,7 @@ def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progr
     return owner, fallbacks, gains
 
 
-def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fallback, on_progress=None):
+def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fallback, on_progress=None, *, bounded=True):
     """Blend low-frequency exposure across seams, retaining source detail."""
     height, width = evidence.shape
     blender = cv2.detail_MultiBandBlender()
@@ -481,6 +481,17 @@ def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fal
             if not np.any(selected):
                 continue
             selected = cv2.dilate(selected, np.ones((7, 7), np.uint8))
+            if bounded:
+                # Only this source's selected region contributes to the blend.
+                # Retain four pyramid supports of context and align the crop
+                # with the five-band pyramid's global 32-pixel sampling grid.
+                x0, y0, crop_width, crop_height = cv2.boundingRect(selected)
+                crop_left = max(left, (left + x0 - 128) // 32 * 32)
+                crop_top = max(top, (top + y0 - 128) // 32 * 32)
+                crop_right = min(right, ((left + x0 + crop_width + 128 + 31) // 32) * 32)
+                crop_bottom = min(bottom, ((top + y0 + crop_height + 128 + 31) // 32) * 32)
+                selected = selected[crop_top - top:crop_bottom - top, crop_left - left:crop_right - left].copy()
+                left, right, top, bottom = crop_left, crop_right, crop_top, crop_bottom
             wx, wy, wz = sin_polar[top:bottom] * sin_lon[:, left:right], -cos_polar[top:bottom], sin_polar[top:bottom] * cos_lon[:, left:right]
             x = inverse[0, 0] * wx + inverse[0, 1] * wy + inverse[0, 2] * wz
             y = inverse[1, 0] * wx + inverse[1, 1] * wy + inverse[1, 2] * wz
