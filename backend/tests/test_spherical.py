@@ -42,6 +42,16 @@ def camera_sweep(include_poles=False, *, poses=None, width=960, height=720):
 
 
 class SphericalTests(unittest.TestCase):
+    def test_low_contrast_ceiling_views_remain_connected_to_the_room(self):
+        images = camera_sweep(include_poles=True)
+        # Preserve actual image detail while reducing its contrast, as on a
+        # plain ceiling. SIFT must recover these pixels, not fabricate poses.
+        images[6:] = [np.clip((image.astype(np.float32) - 128) * .2 + 128, 0, 255).astype(np.uint8) for image in images[6:]]
+        cv2.setRNGSeed(42)
+        prepared = prepare_spherical_matches(images, *_detector_and_norm('sift'))
+        self.assertEqual(prepared.components, [list(range(12))])
+        self.assertTrue(all(any(index in (pair['from_index'], pair['to_index']) for pair in prepared.reports) for index in range(6, 12)))
+
     def test_collapsed_and_reflected_homographies_are_not_camera_rotations(self):
         collapsed = np.array([[1., 0., 100.], [0., 1e-6, 20.], [0., 0., 1.]])
         reflected = np.diag([-1., 1., 1.])

@@ -176,7 +176,10 @@ def _detector_and_norm(algorithm: Algorithm):
     if algorithm == "sift":
         if not hasattr(cv2, "SIFT_create"):
             raise StitchingError("SIFT is unavailable in this OpenCV installation.")
-        return cv2.SIFT_create(nfeatures=4000), cv2.NORM_L2, 0.75
+        # Plain ceilings contain faint texture that the default .04 contrast
+        # threshold discards. Retain it for overhead-to-tilted-view matches;
+        # the 4000-feature cap and all geometric/inlier checks stay unchanged.
+        return cv2.SIFT_create(nfeatures=4000, contrastThreshold=0.01), cv2.NORM_L2, 0.75
     raise StitchingError("Algorithm must be either 'orb' or 'sift'.")
 
 
