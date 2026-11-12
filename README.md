@@ -44,6 +44,13 @@ loading to share the existing 100-million-pixel working budget, with a maximum
 long edge of 1600 pixels. Every photo is retained; original source-dimension,
 download-size, ownership, and decoding safety checks still apply.
 
+The guided spherical pipeline uses SIFT/FLANN with OpenCV `USAC_MAGSAC` for
+homography estimation, followed by camera refinement. Rendering balances exposure,
+selects source regions using graph-cut seams, and uses multi-band blending at
+their boundaries to reduce ghosting. It does not correct arbitrary parallax or
+moving subjects. The separate legacy planar stitcher uses standard RANSAC; the
+`ransac_threshold` API field remains for compatibility.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More

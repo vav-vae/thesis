@@ -30,7 +30,7 @@ export function formatCaptureDiagnostic(error: unknown, context: CaptureDiagnost
   else if (context.file) lines.push(`File: ${context.file.name}`);
   if (context.file) lines.push(`Original file: ${context.file.type || "unknown type"}, ${context.file.size.toLocaleString()} bytes`);
   if (context.dimensions) lines.push(`Dimensions: ${context.dimensions}`);
-  if (context.algorithm) lines.push(`Matching: ${context.algorithm.toUpperCase()}, RANSAC ${context.ransacThreshold ?? "default"}`);
+  if (context.algorithm) lines.push(`Matching: ${context.algorithm.toUpperCase()}, MAGSAC tolerance ${context.ransacThreshold ?? "default"} px`);
   if (context.durationMs != null) lines.push(`Elapsed: ${Math.round(context.durationMs)} ms`);
   if (context.online != null) lines.push(`Browser network: ${context.online ? "online" : "offline"}`);
   const seen = new Set<unknown>();

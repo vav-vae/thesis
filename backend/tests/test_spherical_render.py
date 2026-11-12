@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import cv2
 import numpy as np
 from backend.services.spherical import _render_spherical_photos, prepare_spherical_matches
@@ -7,6 +8,37 @@ from backend.tests.test_spherical import camera_sweep
 
 
 class SphericalRenderTests(unittest.TestCase):
+    def test_multiband_failure_keeps_real_source_pixels_and_reports_fallback(self):
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 80., 1., 60., 45.
+        source = np.full((90, 120, 3), 180, np.uint8)
+        report = {}
+        with patch('backend.services.spherical._blend_source_seams', side_effect=cv2.error('Simulated blend failure')):
+            result, evidence, _ = _render_spherical_photos([source], [camera], [np.eye(3, dtype=np.float32)], 360, 180, seam_aware=True, report=report)
+        self.assertTrue(np.all(result[evidence > 0] == 180))
+        self.assertTrue(report['multiband_failed'])
+        self.assertEqual(report['blending_method'], 'graphcut_single_source_fallback')
+
+    def test_seam_render_does_not_average_disagreeing_sources_or_lose_coverage(self):
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 80., 1., 60., 45.
+        rotation = np.eye(3, dtype=np.float32)
+        first = np.full((90, 120, 3), (220, 40, 40), np.uint8)
+        second = np.full_like(first, (40, 40, 220))
+        report = {}
+        selected, evidence, _ = _render_spherical_photos([first, second], [camera, camera], [rotation, rotation], 720, 360, seam_aware=True, report=report)
+        _, reference, _ = _render_spherical_photos([first, second], [camera, camera], [rotation, rotation], 720, 360)
+        np.testing.assert_array_equal(evidence, reference)
+        interior = cv2.erode(evidence, np.ones((15, 15), np.uint8)) > 0
+        colors = selected[interior].astype(np.int16)
+        corrected_sources = np.clip(np.array([[220, 40, 40], [40, 40, 220]]) * np.array(report['exposure_gains']), 0, 255).astype(np.int16)
+        distances = np.min(np.max(np.abs(colors[:, None, :] - corrected_sources[None, :, :]), axis=2), axis=1)
+        # A broad average would sit midway between these very different colors.
+        # Allow small pyramid reconstruction/rounding differences at the seam.
+        self.assertLessEqual(float(distances.max()), 8)
+        self.assertEqual(report['blending_method'], 'graphcut_multiband')
+        self.assertEqual(report['seam_fallbacks'], 0)
+
     def test_large_capture_search_retains_a_connected_camera_sweep(self):
         cv2.setRNGSeed(42)
         images = camera_sweep(poses=[(index * 360 / 44, 0) for index in range(44)], width=240, height=180)

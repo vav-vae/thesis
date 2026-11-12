@@ -498,7 +498,7 @@ def reconstruct_hybrid_panorama(
         "input_image_count": input_count,
         "used_image_indices": used_indices,
         "excluded_image_indices": excluded_indices,
-        "pipeline": ["ORB feature detection" if algorithm == "orb" else "SIFT feature detection", "BFMatcher" if algorithm == "orb" else "FLANN indexed matching", "MAGSAC homography", "rotation geometry verification", "camera rotation estimation", "bundle adjustment", "spherical projection", "feather blending", "gap completion"],
+        "pipeline": ["ORB feature detection" if algorithm == "orb" else "SIFT feature detection", "BFMatcher" if algorithm == "orb" else "FLANN indexed matching", "MAGSAC homography", "rotation geometry verification", "camera rotation estimation", "bundle adjustment", "spherical projection", "graph-cut source selection", "gap completion"],
         "image_count": len(images),
         "output_width": int(final.shape[1]),
         "output_height": int(final.shape[0]),

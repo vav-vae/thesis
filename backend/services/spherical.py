@@ -399,9 +399,123 @@ def _camera_canvas_regions(camera, rotation, image_size, width, height):
     return [(left, right, top, bottom)]
 
 
-def _render_spherical_photos(working, cameras, rotations, width=4096, height=2048, on_progress=None, *, bounded=True):
-    accumulated = np.zeros((height, width, 3), np.float32)
-    weights = np.zeros((height, width), np.float32)
+def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progress=None):
+    """Find content-aware seams on a small spherical preview, one source/pixel.
+
+    Process two canvases at a time so memory does not grow with the photo count.
+    Horizontal wrap padding supplies seam context across the panorama boundary.
+    """
+    owner = np.full((height, width), -1, np.int16)
+    mosaic = np.zeros((height, width, 3), np.float32)
+    longitude = ((np.arange(width, dtype=np.float32) + .5) / width * 2 - 1) * np.pi
+    polar = (np.arange(height, dtype=np.float32)[:, None] + .5) / height * np.pi
+    wx, wy, wz = np.sin(polar) * np.sin(longitude)[None, :], -np.cos(polar), np.sin(polar) * np.cos(longitude)[None, :]
+    finder = cv2.detail_GraphCutSeamFinder('COST_COLOR_GRAD')
+    fallbacks = 0
+    padding = max(8, width // 8)
+    sources, source_masks = [], []
+    for index, (image, camera, rotation) in enumerate(zip(working, cameras, rotations)):
+        if on_progress:
+            on_progress(f"Selecting sharp source regions for photo {index + 1} of {len(working)}")
+        inverse, k = rotation.T, camera.K()
+        x = inverse[0, 0] * wx + inverse[0, 1] * wy + inverse[0, 2] * wz
+        y = inverse[1, 0] * wx + inverse[1, 1] * wy + inverse[1, 2] * wz
+        z = inverse[2, 0] * wx + inverse[2, 1] * wy + inverse[2, 2] * wz
+        denominator = np.where(z > 1e-6, z, 1)
+        mx = (k[0, 0] * x / denominator + k[0, 2]).astype(np.float32)
+        my = (k[1, 1] * y / denominator + k[1, 2]).astype(np.float32)
+        valid = (z > 1e-6) & (mx >= 0) & (my >= 0) & (mx <= image.shape[1] - 1) & (my <= image.shape[0] - 1)
+        mx[~valid], my[~valid] = -1, -1
+        warped = cv2.remap(image, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT).astype(np.float32)
+        sources.append(warped.astype(np.uint8))
+        source_masks.append(valid.astype(np.uint8) * 255)
+    gains = np.ones((len(working), 3), np.float32)
+    if len(working) > 1:
+        try:
+            compensation = cv2.detail_ChannelsCompensator()
+            compensation.feed([(0, 0)] * len(working), sources, source_masks)
+            gains = np.clip(np.array([np.asarray(gain).reshape(-1)[:3] for gain in compensation.getMatGains()], np.float32), .5, 2.)
+            if gains.shape != (len(working), 3) or not np.isfinite(gains).all():
+                raise ValueError('Invalid exposure correction')
+        except (cv2.error, ValueError):
+            gains = np.ones((len(working), 3), np.float32)
+            fallbacks += 1
+    for index, (source, mask) in enumerate(zip(sources, source_masks)):
+        valid = mask > 0
+        warped = np.clip(source.astype(np.float32) * gains[index], 0, 255).astype(np.uint8).astype(np.float32)
+        existing = owner >= 0
+        take = valid & ~existing
+        if np.count_nonzero(valid & existing) >= 32:
+            masks = [cv2.UMat(np.pad((mask.astype(np.uint8) * 255), ((0, 0), (padding, padding)), mode='wrap')) for mask in (existing, valid)]
+            pictures = [np.pad(picture, ((0, 0), (padding, padding), (0, 0)), mode='wrap') for picture in (mosaic, warped)]
+            try:
+                selected = finder.find(pictures, [(0, 0), (0, 0)], masks)
+                second = (selected if selected is not None else masks)[1]
+                second = second.get() if hasattr(second, 'get') else second
+                take |= valid & (second[:, padding:-padding] > 0)
+            except cv2.error:
+                # Preserve an existing single source instead of reverting to
+                # broad averaging if a particular seam cannot be optimized.
+                fallbacks += 1
+        owner[take] = index
+        mosaic[take] = warped[take]
+    return owner, fallbacks, gains
+
+
+def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fallback, on_progress=None):
+    """Blend low-frequency exposure across seams, retaining source detail."""
+    height, width = evidence.shape
+    blender = cv2.detail_MultiBandBlender()
+    blender.setNumBands(5)
+    blender.prepare((0, 0, width, height))
+    longitude = ((np.arange(width, dtype=np.float32) + .5) / width * 2 - 1) * np.pi
+    polar = (np.arange(height, dtype=np.float32)[:, None] + .5) / height * np.pi
+    sin_lon, cos_lon = np.sin(longitude)[None, :], np.cos(longitude)[None, :]
+    sin_polar, cos_polar = np.sin(polar), np.cos(polar)
+    for index, (image, camera, rotation) in enumerate(zip(working, cameras, rotations)):
+        if on_progress:
+            on_progress(f"Blending source seams for photo {index + 1} of {len(working)}")
+        k, inverse = camera.K(), rotation.T
+        for left, right, top, bottom in _camera_canvas_regions(camera, rotation, image.shape[1::-1], width, height):
+            selected = (owner[top:bottom, left:right] == index).astype(np.uint8) * 255
+            if not np.any(selected):
+                continue
+            selected = cv2.dilate(selected, np.ones((7, 7), np.uint8))
+            wx, wy, wz = sin_polar[top:bottom] * sin_lon[:, left:right], -cos_polar[top:bottom], sin_polar[top:bottom] * cos_lon[:, left:right]
+            x = inverse[0, 0] * wx + inverse[0, 1] * wy + inverse[0, 2] * wz
+            y = inverse[1, 0] * wx + inverse[1, 1] * wy + inverse[1, 2] * wz
+            z = inverse[2, 0] * wx + inverse[2, 1] * wy + inverse[2, 2] * wz
+            denominator = np.where(z > 1e-6, z, 1)
+            mx = (k[0, 0] * x / denominator + k[0, 2]).astype(np.float32)
+            my = (k[1, 1] * y / denominator + k[1, 2]).astype(np.float32)
+            valid = (z > 1e-6) & (mx >= 0) & (my >= 0) & (mx <= image.shape[1] - 1) & (my <= image.shape[0] - 1)
+            selected[~valid] = 0
+            mx[~valid], my[~valid] = -1, -1
+            warped = cv2.remap(image, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+            corrected = np.clip(warped.astype(np.float32) * gains[index], 0, 255).astype(np.int16)
+            blender.feed(corrected, selected, (left, top))
+    blended, mask = blender.blend(None, None)
+    result = fallback.copy()
+    use = (mask > 0) & (evidence > 0)
+    result[use] = np.clip(blended[use], 0, 255).astype(np.uint8)
+    result[evidence == 0] = 0
+    return result
+
+
+def _render_spherical_photos(working, cameras, rotations, width=4096, height=2048, on_progress=None, *, bounded=True, seam_aware=False, report=None):
+    if seam_aware:
+        owner, seam_fallbacks, exposure_gains = _seam_ownership(working, cameras, rotations, on_progress=on_progress)
+        owner = cv2.resize(owner, (width, height), interpolation=cv2.INTER_NEAREST)
+        chosen = np.zeros((height, width, 3), np.uint8)
+        chosen_valid = np.zeros((height, width), bool)
+        fallback = np.zeros_like(chosen)
+        best_weight = np.zeros((height, width), np.float32)
+        fallback_owner = np.full((height, width), -1, np.int16)
+        if report is not None:
+            report.update(blending_method='graphcut_multiband', seam_resolution=[512, 256], seam_fallbacks=seam_fallbacks, exposure_gains=exposure_gains.tolist())
+    else:
+        accumulated = np.zeros((height, width, 3), np.float32)
+        weights = np.zeros((height, width), np.float32)
     longitude = ((np.arange(width, dtype=np.float32) + .5) / width * 2 - 1) * np.pi
     polar = (np.arange(height, dtype=np.float32)[:, None] + .5) / height * np.pi
     sin_lon, cos_lon = np.sin(longitude)[None, :], np.cos(longitude)[None, :]
@@ -434,8 +548,32 @@ def _render_spherical_photos(working, cameras, rotations, width=4096, height=204
                 weight = np.where(valid, np.maximum(edge, 0) + 1, 0)
                 map_x[~valid], map_y[~valid] = -1, -1
                 warped = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-                accumulated[start:end, left:right] += warped.astype(np.float32) * weight[:, :, None]
-                weights[start:end, left:right] += weight
+                if seam_aware:
+                    warped = np.clip(warped.astype(np.float32) * exposure_gains[image_index], 0, 255).astype(np.uint8)
+                    # Each output pixel comes from one actual photograph.
+                    # A full-resolution geometric fallback keeps valid boundary
+                    # pixels that a coarse seam preview could not represent.
+                    better = valid & (weight > best_weight[start:end, left:right])
+                    fallback[start:end, left:right][better] = warped[better]
+                    best_weight[start:end, left:right][better] = weight[better]
+                    fallback_owner[start:end, left:right][better] = image_index
+                    selected = valid & (owner[start:end, left:right] == image_index)
+                    chosen[start:end, left:right][selected] = warped[selected]
+                    chosen_valid[start:end, left:right] |= selected
+                else:
+                    accumulated[start:end, left:right] += warped.astype(np.float32) * weight[:, :, None]
+                    weights[start:end, left:right] += weight
+    if seam_aware:
+        fallback[chosen_valid] = chosen[chosen_valid]
+        evidence = np.where(best_weight > 0, 255, 0).astype(np.uint8)
+        fallback_owner[chosen_valid] = owner[chosen_valid]
+        try:
+            result = _blend_source_seams(working, cameras, rotations, fallback_owner, evidence, exposure_gains, fallback, on_progress)
+        except cv2.error:
+            result = fallback
+            if report is not None:
+                report.update(blending_method='graphcut_single_source_fallback', multiband_failed=True)
+        return result, evidence, sampled
     panorama = np.clip(np.divide(accumulated, weights[:, :, None], out=accumulated, where=weights[:, :, None] > 0), 0, 255).astype(np.uint8)
     return panorama, np.where(weights > 0, 255, 0).astype(np.uint8), sampled
 
@@ -474,11 +612,13 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
         camera_estimation_ms = round((perf_counter() - started) * 1000, 2)
         render_started = perf_counter()
         width, height = 4096, 2048
-        panorama, evidence, render_samples = _render_spherical_photos(working, cameras, rotations, width, height, on_progress)
+        render_report = {}
+        panorama, evidence, render_samples = _render_spherical_photos(working, cameras, rotations, width, height, on_progress, seam_aware=True, report=render_report)
     except cv2.error as error:
         raise StitchingError('Spherical camera alignment failed. Retake overlapping images from one fixed position.') from error
     return panorama, evidence, reports, {
         **alignment_report,
+        **render_report,
         'working_max_dimension': 1600,
         'render_sample_count': render_samples,
         'render_full_sample_count': width * height * len(working),
