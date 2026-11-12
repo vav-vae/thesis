@@ -119,6 +119,7 @@ export default function CreateVirtualTourPage() {
   const [error, setError] = useState("");
   const [validationFailed, setValidationFailed] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [retakeFile, setRetakeFile] = useState<File | null>(null);
   const [previewedFile, setPreviewedFile] = useState<File | null>(null);
   const [debugLogsEnabled, setDebugLogsEnabled] = useState(DEVELOPMENT_LOGS_ENABLED);
   const [devLogsOpen, setDevLogsOpen] = useState(true);
@@ -443,6 +444,35 @@ export default function CreateVirtualTourPage() {
     return true;
   };
 
+  const startRetake = (file: File) => {
+    if (generating || publishing || validating) return;
+    setPreviewedFile(null);
+    setRetakeFile(file);
+  };
+
+  const replaceCapture = async (file: File, context?: CaptureShotContext) => {
+    const original = retakeFile;
+    if (!original || !filesRef.current.includes(original)) throw new Error("The original photo is no longer in this set.");
+    const inspected = await cachedPromise(inspectionCacheRef.current, file, () => inspectImage(file));
+    const blockingIssue = inspected.issues.find((issue) => issue.severity === "error");
+    if (blockingIssue) throw new Error(blockingIssue.message);
+    const index = filesRef.current.indexOf(original);
+    if (index < 0) throw new Error("The original photo is no longer in this set.");
+    const view = captureViewsRef.current.get(original) ?? "around";
+    const nextViews = new Map(captureViewsRef.current);
+    nextViews.delete(original);
+    nextViews.set(file, view);
+    captureViewsRef.current = nextViews;
+    setCaptureViews(nextViews);
+    const nextFiles = filesRef.current.map((existing) => existing === original ? file : existing);
+    await selectFiles(nextFiles, algorithm, ransacThreshold, true);
+    if (context) setCaptureShots((previous) => new Map(previous).set(file, { ...context, view }));
+    addDevLog("info", `Retook photo ${index + 1}`, `Replaced ${original.name} with ${file.name}. Photo count unchanged.`);
+    setRetakeFile(null);
+    void selectFiles(filesRef.current);
+    return true;
+  };
+
   const closeCaptureSession = () => {
     setCameraOpen(false);
     if (captureSessionDirtyRef.current) {
@@ -586,6 +616,7 @@ export default function CreateVirtualTourPage() {
   };
 
   const reset = () => {
+    setRetakeFile(null);
     setCaptureShots(new Map());
     setRestoredInput(null);
     workflowRevisionRef.current += 1;
@@ -642,7 +673,7 @@ export default function CreateVirtualTourPage() {
             <div className="border-y border-slate-200 bg-slate-50/60 p-6 sm:p-8">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Step 2</p>
               <h2 className="mt-2 text-xl font-semibold">Capture around, top, and bottom</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">Start with a full circle of level views, then add overlapping ceiling and floor views. Use at least 6 landscape photos. There is no fixed photo-count limit; larger sets take longer and remain subject to processing-size limits. In live capture, take consecutive photos and switch between walls, ceiling, and floor without closing the camera. Tap Finish &amp; generate to create the tour, or Done to review and check the photos first.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">Start with a full circle of level views, then add overlapping ceiling and floor views. Use at least 6 landscape photos. Use up to 64 photos per room; larger sets take longer and remain subject to processing-size limits. In live capture, take consecutive photos and switch between walls, ceiling, and floor without closing the camera. Tap Finish &amp; generate to create the tour, or Done to review and check the photos first.</p>
               <div className="mt-5 grid gap-2 sm:grid-cols-3" role="group" aria-label="Next photo type">
                 {CAPTURE_VIEWS.map((view) => <button key={view} type="button" aria-pressed={captureView === view} disabled={validating || generating || publishing} onClick={() => setCaptureView(view)} className={`rounded-xl border p-3 text-left disabled:opacity-50 ${captureView === view ? "border-blue-300 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white"}`}><p className="text-sm font-semibold">{CAPTURE_GUIDE[view].label}</p><p className="mt-1 text-xs text-slate-500">{sourceCaptureViews.filter((item) => item === view).length} photos added</p></button>)}
               </div>
@@ -661,7 +692,7 @@ export default function CreateVirtualTourPage() {
               {validations.length > 0 && <div className="mt-5 space-y-2">{validations.map((item, index) => {
                 const hasError = item.issues.some((issue) => issue.severity === "error");
                 const firstIssue = item.issues.find((issue) => issue.severity === "error") ?? item.issues[0];
-                return <div key={`${item.file.name}-${index}`} className={`flex items-center gap-3 rounded-xl border bg-white p-3 ${hasError ? "border-red-200" : firstIssue ? "border-amber-200" : "border-slate-200"}`}><button type="button" onClick={() => setPreviewedFile(item.file)} aria-label={`Preview photo ${index + 1}: ${item.file.name}`} className="group relative size-14 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500"><LocalCaptureImage file={item.file} alt={`Photo ${index + 1} thumbnail`} className="size-full object-cover" /><span className="absolute bottom-0 right-0 rounded-tl-md bg-slate-950/75 p-1 text-white"><Eye size={13} /></span></button><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{index + 1}. {CAPTURE_GUIDE[captureViews.get(item.file) ?? "around"].label} · {item.file.name}</p><p className={`mt-0.5 text-xs ${hasError ? "text-red-700" : firstIssue ? "text-amber-700" : "text-slate-400"}`}>{firstIssue?.message || `${item.width}×${item.height} · ${item.keypoints == null ? "Overlap check pending" : `${item.keypoints} features · Checked`}`}</p>{item.blurScore !== undefined && <p className="mt-1 text-[10px] text-slate-400">Sharpness {item.blurScore.toFixed(0)} · Brightness {item.brightness?.toFixed(0)} · {item.keypoints} keypoints</p>}</div><select aria-label={`Photo type for image ${index + 1}`} value={captureViews.get(item.file) ?? "around"} disabled={validating || generating || publishing} onChange={(event) => { const next = event.target.value as CaptureView; updateCaptureView(item.file, next); void selectFiles(filesRef.current); }} className="max-w-28 rounded-lg border border-slate-200 p-2 text-xs">{CAPTURE_VIEWS.map((view) => <option key={view} value={view}>{CAPTURE_GUIDE[view].label}</option>)}</select><button type="button" disabled={generating || publishing} onClick={() => removeFile(index)} aria-label={`Remove image ${index + 1}: ${item.file.name}`} title="Remove only this photo" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-red-600"><Trash2 size={17} /></button></div>;
+                return <div key={`${item.file.name}-${index}`} className={`flex items-center gap-3 rounded-xl border bg-white p-3 ${hasError ? "border-red-200" : firstIssue ? "border-amber-200" : "border-slate-200"}`}><button type="button" onClick={() => setPreviewedFile(item.file)} aria-label={`Preview photo ${index + 1}: ${item.file.name}`} className="group relative size-14 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500"><LocalCaptureImage file={item.file} alt={`Photo ${index + 1} thumbnail`} className="size-full object-cover" /><span className="absolute bottom-0 right-0 rounded-tl-md bg-slate-950/75 p-1 text-white"><Eye size={13} /></span></button><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{index + 1}. {CAPTURE_GUIDE[captureViews.get(item.file) ?? "around"].label} · {item.file.name}</p><p className={`mt-0.5 text-xs ${hasError ? "text-red-700" : firstIssue ? "text-amber-700" : "text-slate-400"}`}>{firstIssue?.message || `${item.width}×${item.height} · ${item.keypoints == null ? "Overlap check pending" : `${item.keypoints} features · Checked`}`}</p>{item.blurScore !== undefined && <p className="mt-1 text-[10px] text-slate-400">Sharpness {item.blurScore.toFixed(0)} · Brightness {item.brightness?.toFixed(0)} · {item.keypoints} keypoints</p>}</div><select aria-label={`Photo type for image ${index + 1}`} value={captureViews.get(item.file) ?? "around"} disabled={validating || generating || publishing} onChange={(event) => { const next = event.target.value as CaptureView; updateCaptureView(item.file, next); void selectFiles(filesRef.current); }} className="max-w-28 rounded-lg border border-slate-200 p-2 text-xs">{CAPTURE_VIEWS.map((view) => <option key={view} value={view}>{CAPTURE_GUIDE[view].label}</option>)}</select><button type="button" disabled={validating || generating || publishing} onClick={() => startRetake(item.file)} aria-label={`Retake photo ${index + 1}`} title="Retake only this photo" className="rounded-lg p-2 text-blue-600 hover:bg-blue-50"><RotateCcw size={17} /></button><button type="button" disabled={generating || publishing} onClick={() => removeFile(index)} aria-label={`Remove image ${index + 1}: ${item.file.name}`} title="Remove only this photo" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-red-600"><Trash2 size={17} /></button></div>;
               })}</div>}
               {analysisIssues.length > 0 && <div className="mt-5 space-y-2">{analysisIssues.map((issue) => <div key={issue.code} role={issue.severity === "error" ? "alert" : "status"} className={`rounded-xl border p-3 text-sm ${issue.severity === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}><p className="font-semibold">Image set overlap</p><p className="mt-1">{issue.message}</p></div>)}</div>}
               {pairValidations.length > 0 && <div className="mt-5"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Matched image overlap</p><p className="mb-3 mt-1 text-xs leading-5 text-slate-500">These links connect matching views across the full image set. Every image must connect to the others, even when uploaded out of order.</p><div className="grid gap-2 sm:grid-cols-2">{pairValidations.map((pair) => {
@@ -693,7 +724,8 @@ export default function CreateVirtualTourPage() {
           {devLogs.length === 0 ? <p className="px-1 py-3 text-xs text-slate-400">Live camera, upload, validation, generation, and publish events will appear here.</p> : devLogs.map((entry) => <article key={entry.id} className={`rounded-lg border px-3 py-2 ${entry.level === "error" ? "border-red-900/80 bg-red-950/50" : "border-slate-800 bg-slate-900"}`}><p className={`text-xs font-semibold ${entry.level === "error" ? "text-red-300" : "text-slate-200"}`}><time className="mr-2 font-normal text-slate-500">{entry.time}</time>{entry.message}</p>{entry.detail && <details open={entry.level === "error"} className="mt-2"><summary className="cursor-pointer text-[11px] text-slate-400">Diagnostic details</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-300">{entry.detail}</pre></details>}</article>)}
         </div>}
       </section>}
-      {previewedFile && previewIndex >= 0 && <CapturedPhotoPreview file={previewedFile} index={previewIndex} total={files.length} view={captureViews.get(previewedFile) ?? "around"} dimensions={previewValidation} issues={previewValidation?.issues.map((issue) => issue.message)} onPrevious={previewIndex > 0 ? () => setPreviewedFile(files[previewIndex - 1]) : undefined} onNext={previewIndex < files.length - 1 ? () => setPreviewedFile(files[previewIndex + 1]) : undefined} onClose={() => setPreviewedFile(null)} onImageError={() => reportError("Photo preview", new Error("The saved image could not be displayed."), { file: previewedFile, photoIndex: previewIndex })} />}
+      {previewedFile && previewIndex >= 0 && <CapturedPhotoPreview file={previewedFile} index={previewIndex} total={files.length} view={captureViews.get(previewedFile) ?? "around"} dimensions={previewValidation} issues={previewValidation?.issues.map((issue) => issue.message)} onPrevious={previewIndex > 0 ? () => setPreviewedFile(files[previewIndex - 1]) : undefined} onNext={previewIndex < files.length - 1 ? () => setPreviewedFile(files[previewIndex + 1]) : undefined} onClose={() => setPreviewedFile(null)} onRetake={!generating && !publishing && !validating ? () => startRetake(previewedFile) : undefined} onImageError={() => reportError("Photo preview", new Error("The saved image could not be displayed."), { file: previewedFile, photoIndex: previewIndex })} />}
+      {retakeFile && <PhoneCameraCapture captureProgress={captureProgress} imageNumber={files.indexOf(retakeFile) + 1} captureView={captureViews.get(retakeFile) ?? "around"} replacement={{ total: files.length, phase: captureShots.get(retakeFile)?.phase ?? ((captureViews.get(retakeFile) ?? "around") === "around" ? "ring" : "bridge") }} onCapture={(file, _heading, context) => replaceCapture(file, context)} onClose={() => setRetakeFile(null)} onDebug={(message, detail) => addDevLog("error", message, detail)} />}
       {cameraOpen && <PhoneCameraCapture captureProgress={captureProgress} captureView={captureView} onCaptureViewChange={setCaptureView} imageNumber={files.length + 1} onFinish={selectedProperty && roomType.trim() && files.length >= MIN_CAPTURE_IMAGES ? () => void finishCaptureAndGenerate() : undefined} onCapture={async (file, _heading, context) => { addDevLog("info", `Live camera captured ${file.name} (${file.type || "unknown type"}, ${Math.round(file.size / 1024)} KB).`); const accepted = await addCapture(file, true); if (accepted && context) {
         setCaptureShots((previous) => new Map(previous).set(file, context));
         addDevLog("info", `Capture guide: ${context.view} / ${context.phase}`, `Photo: ${filesRef.current.length}\nTarget: ${context.phase}\nMeasured pitch: ${context.pitch == null ? "unavailable" : `${Math.round(context.pitch)}°`}\nHeading: ${context.heading == null ? "unavailable" : `${Math.round(context.heading)}°`}`);

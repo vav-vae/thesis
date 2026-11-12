@@ -10,6 +10,7 @@ import CapturedPhotoPreview, { LocalCaptureImage } from "./CapturedPhotoPreview"
 
 type PhoneCameraCaptureProps = {
   imageNumber: number;
+  replacement?: { total: number; phase: CapturePhase };
   captureView?: CaptureView;
   onCaptureViewChange?: (view: CaptureView) => void;
   onCapture: (file: File, heading?: number, context?: CaptureShotContext) => void | boolean | Promise<void | boolean>;
@@ -29,7 +30,7 @@ function cameraMessage(error: unknown) {
   return "The live camera could not start. Retry or use your phone’s native camera.";
 }
 
-export default function PhoneCameraCapture({ imageNumber, captureView = "around", onCaptureViewChange, onCapture, onClose, onFinish, onDebug, captureProgress = {} }: PhoneCameraCaptureProps) {
+export default function PhoneCameraCapture({ imageNumber, captureView = "around", onCaptureViewChange, onCapture, onClose, onFinish, onDebug, captureProgress = {}, replacement }: PhoneCameraCaptureProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -44,7 +45,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
   const [orientation, setOrientation] = useState<{ heading: number | null; pitch: number | null; time: number } | null>(null);
   const [sensorClock, setSensorClock] = useState(0);
   const [previousHeadings, setPreviousHeadings] = useState<Partial<Record<`${CaptureView}:${CapturePhase}`, number | null>>>({});
-  const [capturePhase, setCapturePhase] = useState<CapturePhase>("bridge");
+  const [capturePhase, setCapturePhase] = useState<CapturePhase>(replacement?.phase ?? "bridge");
   const [rearFacing, setRearFacing] = useState(true);
   const [motionEnabled, setMotionEnabled] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
@@ -73,8 +74,8 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
   const alignment = captureAlignment(captureView, phase, pitch, heading, previousHeadings[headingKey] ?? null);
   const angleReady = alignment.ready;
   const targetLabel = captureView === "around" ? "Level row" : phase === "bridge" ? "Connect to the wall row" : phase === "pole" ? captureView === "top" ? "Directly overhead" : "Directly below" : captureView === "top" ? "Ceiling ring" : "Floor ring";
-  const savedCount = imageNumber - 1;
-  const atLimit = savedCount >= MAX_CAPTURE_IMAGES;
+  const savedCount = replacement?.total ?? imageNumber - 1;
+  const atLimit = !replacement && savedCount >= MAX_CAPTURE_IMAGES;
   const stepIndex = CAPTURE_STEPS.findIndex((step) => step.id === captureStepId(captureView, phase));
   const currentStep = CAPTURE_STEPS[stepIndex];
   const nextStep = CAPTURE_STEPS[stepIndex + 1];
@@ -300,7 +301,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
       if (request !== cameraRequestRef.current) return;
       if (!blob) throw new Error("The camera frame could not be saved.");
       capturedFile = new File([blob], `capture-${captureView}-${imageNumber}-${Date.now()}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
-      if (reviewEveryPhoto) createPreview(capturedFile, capturedHeading, capturedPitch);
+      if (replacement || reviewEveryPhoto) createPreview(capturedFile, capturedHeading, capturedPitch);
       else await savePhoto(capturedFile, capturedHeading, capturedPitch);
     } catch (error) {
       if (capturedFile) createPreview(capturedFile, capturedHeading, capturedPitch);
@@ -364,11 +365,11 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
         <header className={styles.header}>
           <div className={styles.titleBlock}>
             <p className={styles.eyebrow}>Live capture <span aria-hidden="true">·</span> {savedCount}/{MAX_CAPTURE_IMAGES} saved</p>
-            <h2 className={styles.title}>{preview ? "Review photo" : `Photo ${imageNumber}`}<span> · {CAPTURE_GUIDE[captureView].label}</span></h2>
+            <h2 className={styles.title}>{preview ? "Review photo" : `${replacement ? "Retake photo" : "Photo"} ${imageNumber}`}<span> · {CAPTURE_GUIDE[captureView].label}</span></h2>
           </div>
           <div className={styles.headerActions}>
             {savedPhoto && <button type="button" disabled={saving} aria-label="Preview last photo" title="Preview last photo" onClick={() => setSavedPreviewOpen(true)} className={styles.lastPhoto}><LocalCaptureImage file={savedPhoto.file} alt="Last saved photo" className="size-full object-cover" /><span className="absolute inset-x-0 bottom-0 bg-black/70 text-[9px] text-white">Preview</span></button>}
-            <button type="button" onClick={close} disabled={saving || preview != null} className={styles.doneAction}>Review photos</button>
+            <button type="button" onClick={close} disabled={saving || (!replacement && preview != null)} className={styles.doneAction}>{replacement ? "Cancel retake" : "Review photos"}</button>
           </div>
         </header>
 
@@ -404,7 +405,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
           {onCaptureViewChange && <div className={styles.viewChoices} role="group" aria-label="Photo type">
             {CAPTURE_VIEWS.map((view) => <button key={view} type="button" disabled={saving} aria-pressed={captureView === view} onClick={() => { setCapturePhase("bridge"); setSavedMessage(""); onCaptureViewChange(view); }}>{CAPTURE_GUIDE[view].label}</button>)}
           </div>}
-          {captureView !== "around" && <div className={`${styles.viewChoices} ${styles.phaseChoices}`} role="group" aria-label={`${captureView === "top" ? "Ceiling" : "Floor"} capture target`}>
+          {!replacement && captureView !== "around" && <div className={`${styles.viewChoices} ${styles.phaseChoices}`} role="group" aria-label={`${captureView === "top" ? "Ceiling" : "Floor"} capture target`}>
             <button type="button" disabled={saving} aria-pressed={phase === "bridge"} onClick={() => { setCapturePhase("bridge"); setSavedMessage(""); }}>1 · Include wall<br />{captureView === "top" ? "+30°" : "−30°"}</button>
             <button type="button" disabled={saving} aria-pressed={phase === "ring"} onClick={() => { setCapturePhase("ring"); setSavedMessage(""); }}>2 · {captureView === "top" ? "Ceiling" : "Floor"}<br />{captureView === "top" ? "+60°" : "−60°"}</button>
             <button type="button" disabled={saving} aria-pressed={phase === "pole"} onClick={() => { setCapturePhase("pole"); setSavedMessage(""); }}>3 · {captureView === "top" ? "Overhead" : "Below"}<br />{captureView === "top" ? "+90°" : "−90°"}</button>
@@ -415,17 +416,17 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
             {canCompare && <button type="button" aria-pressed={showOverlap} onClick={() => setShowOverlap(!showOverlap)}>Overlap guide {showOverlap ? "on" : "off"}</button>}
             {nextStep && onCaptureViewChange && <button type="button" disabled={saving} onClick={() => { setCapturePhase(nextStep.phase); setSavedMessage(""); onCaptureViewChange(nextStep.view); }}>Next row: {nextStep.label} →</button>}
           </div>
-          <p className={styles.captureCaution}>{atLimit ? "Photo limit reached. Review this set before generating." : "Counts guide your sequence, not verified coverage. Keep the lens fixed, move slowly, and keep shared detail between rows."}</p>
+          <p className={styles.captureCaution}>{replacement ? "The original stays in your set until you choose Replace photo." : atLimit ? "Photo limit reached. Review this set before generating." : "Counts guide your sequence, not verified coverage. Keep the lens fixed, move slowly, and keep shared detail between rows."}</p>
           {!isLandscape && <p className={styles.orientationNote}>Rotate your phone to landscape for a wider photo.</p>}
           <div className={styles.sessionNext}>
-            <p role="status">{saving ? "Saving photo…" : savedMessage || (savedCount < MIN_CAPTURE_IMAGES ? `${MIN_CAPTURE_IMAGES - savedCount} more photo${MIN_CAPTURE_IMAGES - savedCount === 1 ? "" : "s"} to reach the minimum` : onFinish ? "Ready to check and build your tour" : "Review photos to check the set")}</p>
+            <p role="status">{saving ? "Saving photo…" : replacement ? "Capture the same view, then review your replacement." : savedMessage || (savedCount < MIN_CAPTURE_IMAGES ? `${MIN_CAPTURE_IMAGES - savedCount} more photo${MIN_CAPTURE_IMAGES - savedCount === 1 ? "" : "s"} to reach the minimum` : onFinish ? "Ready to check and build your tour" : "Review photos to check the set")}</p>
             {onFinish && <button type="button" disabled={saving} onClick={() => { if (captureBusyRef.current) return; stopCamera(); clearPreview(); onFinish(); }} className={styles.finishAction}><Check size={17} />Finish &amp; generate</button>}
           </div>
         </div>}
         <footer className={styles.controls}>
           {preview ? <>
             <button type="button" onClick={() => void retake()} disabled={saving} className={styles.secondaryAction}><RotateCcw size={20} /><span>Retake</span></button>
-            <button type="button" onClick={() => void acceptPhoto()} disabled={saving} className={styles.acceptAction}>{saving ? <LoaderCircle className="animate-spin" size={24} /> : <Check size={24} />}<span>{saving ? "Adding…" : "Use & next"}</span></button>
+            <button type="button" onClick={() => void acceptPhoto()} disabled={saving} className={styles.acceptAction}>{saving ? <LoaderCircle className="animate-spin" size={24} /> : <Check size={24} />}<span>{saving ? "Saving…" : replacement ? "Replace photo" : "Use & next"}</span></button>
           </> : <>
             <button ref={optionsButtonRef} type="button" onClick={() => setOptionsOpen(!optionsOpen)} aria-label="Camera options and tips" aria-expanded={optionsOpen} aria-controls="phone-camera-options" className={styles.secondaryAction}><MoreHorizontal size={24} /><span>Options</span></button>
             <button type="button" onClick={() => void capture()} disabled={starting || saving || !cameraReady || atLimit} aria-label="Capture photo" className={styles.shutter}>{saving ? <LoaderCircle className="animate-spin" size={28} /> : <Camera size={28} />}<span className="sr-only">Capture</span></button>
@@ -440,7 +441,7 @@ export default function PhoneCameraCapture({ imageNumber, captureView = "around"
             <p className="text-xs leading-relaxed text-white/65">{CAPTURE_GUIDE[captureView].direction}</p>
             <button type="button" onClick={() => { resetHeadings(); if (motionEnabled) setMotionEnabled(false); else void enableMotionGuide(); }} className={styles.optionAction} aria-pressed={motionEnabled}><Compass size={18} />{motionEnabled ? "Turn off angle / tilt guide" : "Enable angle / tilt guide"}</button>
             <p className="text-xs text-white/50">Turns use an estimated {CAPTURE_TURN_STEP}° spacing. Check 30–50% overlap visually. Complete the 30° row, then 60°, then directly up/down; keep shared detail between rows.</p>
-            <label className={styles.optionAction}><input type="checkbox" checked={reviewEveryPhoto} onChange={(event) => setReviewEveryPhoto(event.target.checked)} />Review every photo before saving</label>
+            <label className={styles.optionAction}><input type="checkbox" disabled={!!replacement} checked={!!replacement || reviewEveryPhoto} onChange={(event) => setReviewEveryPhoto(event.target.checked)} />Review every photo before saving</label>
             <button type="button" onClick={() => void toggleFullscreen()} className={styles.optionAction}>{isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}{isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}</button>
             <label className={styles.optionAction}><Upload size={18} />Use phone camera<input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) createPreview(file); event.currentTarget.value = ""; }} /></label>
           </section>

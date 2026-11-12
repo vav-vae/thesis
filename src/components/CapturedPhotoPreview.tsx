@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- Local capture blobs are released when each preview unmounts. */
 
 import { useEffect, useRef } from "react";
-import { ArrowLeft, ArrowRight, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, RotateCcw, X } from "lucide-react";
 import { CAPTURE_GUIDE, type CaptureView } from "@/lib/capture-guide";
 
 export function LocalCaptureImage({ file, alt, className, onError }: { file: File; alt: string; className?: string; onError?: () => void }) {
@@ -17,7 +17,7 @@ export function LocalCaptureImage({ file, alt, className, onError }: { file: Fil
   return <img ref={imageRef} alt={alt} className={className} loading="lazy" decoding="async" onError={onError} />;
 }
 
-export default function CapturedPhotoPreview({ file, index, total, view, dimensions, issues = [], onPrevious, onNext, onClose, onImageError }: {
+export default function CapturedPhotoPreview({ file, index, total, view, dimensions, issues = [], onPrevious, onNext, onClose, onRetake, onImageError }: {
   file: File;
   index: number;
   total: number;
@@ -27,6 +27,7 @@ export default function CapturedPhotoPreview({ file, index, total, view, dimensi
   onPrevious?: () => void;
   onNext?: () => void;
   onClose: () => void;
+  onRetake?: () => void;
   onImageError?: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -47,8 +48,9 @@ export default function CapturedPhotoPreview({ file, index, total, view, dimensi
     </div>
     <LocalCaptureImage file={file} alt={`Preview of ${file.name}`} className="min-h-0 w-full flex-1 bg-black object-contain" onError={onImageError} />
     {issues.length > 0 && <ul className="max-h-[14dvh] shrink-0 space-y-1 overflow-y-auto border-t border-white/10 px-4 py-3 text-sm text-amber-200">{issues.map((issue, issueIndex) => <li key={issueIndex}>{issue}</li>)}</ul>}
-    <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 p-3">
+    <div className="flex shrink-0 items-center flex-wrap justify-between gap-3 border-t border-white/10 p-3">
       <button type="button" onClick={onPrevious} disabled={!onPrevious} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm hover:bg-white/10 disabled:opacity-30"><ArrowLeft size={18} />Previous</button>
+      {onRetake && <button type="button" onClick={onRetake} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-3 text-sm font-semibold"><RotateCcw size={18} />Retake photo</button>}
       <button type="button" onClick={onClose} className="min-h-11 rounded-xl bg-white px-4 text-sm font-semibold text-slate-900">Close preview</button>
       <button type="button" onClick={onNext} disabled={!onNext} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm hover:bg-white/10 disabled:opacity-30">Next<ArrowRight size={18} /></button>
     </div>
