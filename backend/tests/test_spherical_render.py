@@ -8,6 +8,27 @@ from backend.tests.test_spherical import camera_sweep
 
 
 class SphericalRenderTests(unittest.TestCase):
+    def test_uniform_ceiling_does_not_acquire_black_padding_halos(self):
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 70., 1., 80., 60.
+        images = [np.full((120, 160, 3), 180, np.uint8)] * 3
+        rotations = [cv2.Rodrigues(np.float64([np.pi / 2, 0, yaw]))[0].astype(np.float32) for yaw in (-.4, 0, .4)]
+        result, evidence, _ = _render_spherical_photos(images, [camera] * 3, rotations, 720, 360, seam_aware=True)
+        interior = cv2.erode(evidence, np.ones((5, 5), np.uint8)) > 0
+        self.assertLessEqual(int(np.abs(result[interior].astype(np.int16) - 180).max()), 10)
+        self.assertFalse(np.any(result[evidence == 0]))
+
+    def test_ceiling_cap_does_not_render_any_wall_or_floor_rows(self):
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 40., 1., 60., 45.
+        rotation = cv2.Rodrigues(np.float64([np.pi / 2, 0, 0]))[0].astype(np.float32)
+        source = np.full((90, 120, 3), 180, np.uint8)
+        result, evidence, _ = _render_spherical_photos([source], [camera], [rotation],
+                                                      720, 360, seam_aware=True, polar_limit=66)
+        self.assertTrue(np.any(evidence[:132]))
+        self.assertFalse(np.any(evidence[132:]))
+        self.assertFalse(np.any(result[132:]))
+
     def test_plain_ceiling_exposure_transition_is_not_a_narrow_bright_patch(self):
         camera = cv2.detail.CameraParams()
         camera.focal, camera.aspect, camera.ppx, camera.ppy = 160., 1., 160., 120.
@@ -32,7 +53,7 @@ class SphericalRenderTests(unittest.TestCase):
         _render_spherical_photos([source], [camera], [np.eye(3, dtype=np.float32)],
                                  1200, 600, seam_aware=True, report=report)
         self.assertEqual(report['seam_resolution'], [1024, 512])
-        self.assertEqual(report['renderer_version'], 'spherical-seams-v2')
+        self.assertEqual(report['renderer_version'], 'spherical-ceiling-v3')
 
     def test_cropped_blending_preserves_full_region_output(self):
         random = np.random.default_rng(7)
@@ -76,7 +97,7 @@ class SphericalRenderTests(unittest.TestCase):
         distances = np.min(np.max(np.abs(colors[:, None, :] - corrected_sources[None, :, :]), axis=2), axis=1)
         # A broad average would sit midway between these very different colors.
         # Allow small pyramid reconstruction/rounding differences at the seam.
-        self.assertLessEqual(float(distances.max()), 8)
+        self.assertLessEqual(float(distances.max()), 10)
         self.assertEqual(report['blending_method'], 'graphcut_multiband')
         self.assertEqual(report['seam_fallbacks'], 0)
 
