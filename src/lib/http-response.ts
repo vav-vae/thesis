@@ -40,6 +40,8 @@ export async function readJsonResponse<T = Record<string, unknown>>(
     }
     throw new HttpResponseError(response.status === 504
       ? "The panorama processor timed out. Please try again with smaller photos."
+      : response.status >= 500 && response.status <= 599
+      ? `${fallback} The server failed (HTTP ${response.status}). Please try again shortly.`
       : `${fallback} The server returned an unexpected response. Please try again.`, response);
   }
   if (response.status === 413) {

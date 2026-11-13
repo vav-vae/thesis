@@ -16,3 +16,15 @@ test("permission and capacity failures have distinct debugging steps", () => {
   assert.equal(diagnoseTourLog({ message: "Busy", detail: "HTTP: 503", online: true }).code, "TOUR_PROCESSOR_BUSY");
   assert.equal(diagnoseTourLog({ message: "Error", detail: "HTTP: 504", online: true }).code, "TOUR_TIMEOUT");
 });
+
+test("upload HTTP 500 is a server failure even when the browser reports offline", () => {
+  const diagnosis = diagnoseTourLog({ message: "photo upload failed: Unable to authorize this upload.", detail: "Stage: photo upload\nHTTP: 500\nRequest: POST https://api.cloudinary.com/v1_1/example/image/upload\nResponse URL: https://libot-weld.vercel.app/api/backend/uploads/sign\nVercel request ID: request-500", online: false });
+  assert.equal(diagnosis.code, "TOUR_SERVER_ERROR");
+  assert.equal(diagnosis.facts.find((fact) => fact.label === "Request")?.value, "https://libot-weld.vercel.app/api/backend/uploads/sign");
+  assert.match(diagnosis.suggestions.join(" "), /Vercel request ID/);
+});
+
+test("upload failed wording alone does not imply a browser transport failure", () => {
+  assert.equal(diagnoseTourLog({ message: "Photo upload failed: Invalid signature", detail: "HTTP: 400", online: true }).code, "TOUR_OPERATION_FAILED");
+  assert.equal(diagnoseTourLog({ message: "Load failed", detail: "", online: true }).code, "TOUR_NETWORK_ERROR");
+});

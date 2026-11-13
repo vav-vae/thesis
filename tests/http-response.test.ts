@@ -18,6 +18,18 @@ test('plain-text size limit remains readable even behind a proxy returning 200',
 test('HTML gateway errors do not leak parser errors', async () => {
   await assert.rejects(readJsonResponse(new Response('<html>Gateway timeout</html>', { status: 504 }), 'Failed.'), /processor timed out/);
 });
+
+test('non-JSON startup failures retain the server status and Vercel request ID', async () => {
+  const response = new Response('An error occurred FUNCTION_INVOCATION_FAILED', {
+    status: 500, headers: { 'X-Vercel-ID': 'sin1::startup-123' },
+  });
+  await assert.rejects(readJsonResponse(response, 'Unable to authorize this upload.'), (error) => {
+    assert.ok(error instanceof HttpResponseError);
+    assert.match(error.message, /Unable to authorize this upload.*HTTP 500/);
+    assert.equal(error.vercelId, 'sin1::startup-123');
+    return true;
+  });
+});
 test('JSON API errors retain the reason and retry guidance', async () => {
   await assert.rejects(readJsonResponse(new Response(JSON.stringify({ detail: 'Too many attempts.' }), { status: 429, headers: { 'Retry-After': '30' } }), 'Failed.'), /Too many attempts.*30 seconds/);
 });

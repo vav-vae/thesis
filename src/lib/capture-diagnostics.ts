@@ -24,6 +24,7 @@ export function sanitizeDiagnosticText(value: string): string {
 
 export function formatCaptureDiagnostic(error: unknown, context: CaptureDiagnosticContext): string {
   const lines = [`Stage: ${context.stage}`];
+  let responseUrl = "";
   if (context.endpoint) lines.push(`Request: ${context.method ?? "POST"} ${context.endpoint}`);
   if (context.photoCount != null) lines.push(`Capture set: ${context.photoCount} photos`);
   if (context.photoIndex != null) lines.push(`Photo: ${context.photoIndex + 1}${context.file ? ` · ${context.file.name}` : ""}`);
@@ -48,7 +49,10 @@ export function formatCaptureDiagnostic(error: unknown, context: CaptureDiagnost
     if (typeof item.receivedBytes === "number") lines.push(`Stream bytes received: ${item.receivedBytes}`);
     if (typeof item.progressEvents === "number") lines.push(`Progress events received: ${item.progressEvents}`);
     if (typeof item.status === "number") lines.push(`HTTP: ${item.status} ${typeof item.statusText === "string" ? item.statusText : ""}`.trim());
-    if (typeof item.url === "string" && item.url) lines.push(`Response URL: ${item.url}`);
+    if (typeof item.url === "string" && item.url) {
+      responseUrl = item.url;
+      lines.push(`Response URL: ${item.url}`);
+    }
     if (typeof item.requestId === "string") lines.push(`Request ID: ${item.requestId}`);
     if (typeof item.vercelId === "string") lines.push(`Vercel request ID: ${item.vercelId}`);
     if (typeof item.retryAfter === "string") lines.push(`Retry after: ${item.retryAfter} seconds`);
@@ -57,6 +61,13 @@ export function formatCaptureDiagnostic(error: unknown, context: CaptureDiagnost
     if (item.cause) visit(item.cause, depth + 1);
   };
   visit(error);
+  // Uploads authorize with our backend before contacting Cloudinary. Prefer
+  // the failed response URL over the caller's expected final destination.
+  if (responseUrl) {
+    const requestLine = `Request: ${context.method ?? "POST"} ${responseUrl}`;
+    if (context.endpoint) lines[1] = requestLine;
+    else lines.splice(1, 0, requestLine);
+  }
   if (context.detail) lines.push(context.detail);
   return sanitizeDiagnosticText(lines.join("\n"));
 }

@@ -24,3 +24,16 @@ test('Firebase codes and nested causes stay readable while credentials are redac
   assert.match(log, /Bearer \[redacted\]/);
   assert.doesNotMatch(log, /secret-token|password|private|fragment|eyJhbGci/);
 });
+
+test('upload signing failures report the backend URL instead of Cloudinary', () => {
+  const response = new Response('', { status: 500, headers: { 'X-Vercel-ID': 'startup-123' } });
+  Object.defineProperty(response, 'url', { value: 'https://libot-weld.vercel.app/api/backend/uploads/sign' });
+  const error = new HttpResponseError('Unable to authorize this upload.', response);
+  const log = formatCaptureDiagnostic(new Error('Photo 3 upload failed', { cause: error }), {
+    stage: 'photo upload', endpoint: 'https://api.cloudinary.com/v1_1/example/image/upload', photoIndex: 2,
+  });
+  assert.match(log, /Request: POST https:\/\/libot-weld.vercel.app\/api\/backend\/uploads\/sign/);
+  assert.doesNotMatch(log, /Request:.*cloudinary/);
+  assert.match(log, /HTTP: 500/);
+  assert.match(log, /Vercel request ID: startup-123/);
+});

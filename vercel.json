@@ -9,7 +9,12 @@
       "root": "backend",
       "framework": "fastapi",
       "entrypoint": "main:app",
-      "functions": { "**/*.py": { "maxDuration": 300 } }
+      "functions": {
+        "main.py": {
+          "maxDuration": 300,
+          "excludeFiles": "{tests/**,**/__pycache__/**,venv/**,outputs/**}"
+        }
+      }
     }
   },
   "rewrites": [

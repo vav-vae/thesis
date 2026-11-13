@@ -1,6 +1,7 @@
 fastapi>=0.104,<1.0
 pydantic>=2.9,<3.0
-uvicorn[standard]>=0.24,<1.0
+# Vercel supplies the ASGI server; local development needs only base uvicorn.
+uvicorn>=0.24,<1.0
 numpy>=2.0,<3.0
 opencv-python-headless==4.14.0.94
 python-multipart>=0.0.9,<1.0
