@@ -29,6 +29,7 @@ import { auth, db } from "@/lib/firebase";
 import { useTourGenerationJob } from "@/hooks/useTourGenerationJob";
 import { recordTourLog } from "@/lib/tour-logs";
 import { invalidateTourSummaries } from "@/lib/tour-summaries";
+import { tourMetricsForStorage } from "@/lib/tour-metrics-storage";
 import { HttpResponseError, readJsonResponse } from "@/lib/http-response";
 import { formatCaptureDiagnostic, sanitizeDiagnosticText, type CaptureDiagnosticContext } from "@/lib/capture-diagnostics";
 import { cachedPromise, mapWithConcurrency } from "@/lib/promise-cache";
@@ -556,7 +557,7 @@ export default function CreateVirtualTourPage() {
         panoramaUrl,
         projection: metrics?.projection ?? "stitched-panorama",
         algorithm: algorithm.toUpperCase(),
-        metrics,
+        metrics: tourMetricsForStorage(metrics),
         sourceImageCount: sourceImageUrls.length,
         usedSourceImageCount: metrics?.image_count ?? sourceImageUrls.length,
         excludedSourceImageIndices: metrics?.excluded_image_indices ?? [],
