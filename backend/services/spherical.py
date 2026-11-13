@@ -465,8 +465,15 @@ def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progr
 def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fallback, on_progress=None, *, bounded=True):
     """Blend low-frequency exposure across seams, retaining source detail."""
     height, width = evidence.shape
+    # Five bands only blend across ~32 output pixels: too narrow for the
+    # broad exposure differences on plain ceilings at 4096px. Scale the
+    # low-frequency support with output size, leaving sharp detail in the
+    # finest band. Crop support/grid must use the same pyramid depth.
+    bands = max(3, min(8, int(np.ceil(np.log2(max(width, height) / 16)))))
+    grid = 1 << bands
+    context = 4 * grid
     blender = cv2.detail_MultiBandBlender()
-    blender.setNumBands(5)
+    blender.setNumBands(bands)
     blender.prepare((0, 0, width, height))
     longitude = ((np.arange(width, dtype=np.float32) + .5) / width * 2 - 1) * np.pi
     polar = (np.arange(height, dtype=np.float32)[:, None] + .5) / height * np.pi
@@ -484,12 +491,12 @@ def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fal
             if bounded:
                 # Only this source's selected region contributes to the blend.
                 # Retain four pyramid supports of context and align the crop
-                # with the five-band pyramid's global 32-pixel sampling grid.
+                # with the pyramid's global sampling grid.
                 x0, y0, crop_width, crop_height = cv2.boundingRect(selected)
-                crop_left = max(left, (left + x0 - 128) // 32 * 32)
-                crop_top = max(top, (top + y0 - 128) // 32 * 32)
-                crop_right = min(right, ((left + x0 + crop_width + 128 + 31) // 32) * 32)
-                crop_bottom = min(bottom, ((top + y0 + crop_height + 128 + 31) // 32) * 32)
+                crop_left = max(left, (left + x0 - context) // grid * grid)
+                crop_top = max(top, (top + y0 - context) // grid * grid)
+                crop_right = min(right, ((left + x0 + crop_width + context + grid - 1) // grid) * grid)
+                crop_bottom = min(bottom, ((top + y0 + crop_height + context + grid - 1) // grid) * grid)
                 selected = selected[crop_top - top:crop_bottom - top, crop_left - left:crop_right - left].copy()
                 left, right, top, bottom = crop_left, crop_right, crop_top, crop_bottom
             wx, wy, wz = sin_polar[top:bottom] * sin_lon[:, left:right], -cos_polar[top:bottom], sin_polar[top:bottom] * cos_lon[:, left:right]
@@ -515,7 +522,11 @@ def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fal
 
 def _render_spherical_photos(working, cameras, rotations, width=4096, height=2048, on_progress=None, *, bounded=True, seam_aware=False, report=None):
     if seam_aware:
-        owner, seam_fallbacks, exposure_gains = _seam_ownership(working, cameras, rotations, on_progress=on_progress)
+        # Keep large-set memory bounded while selecting seams at twice the
+        # former resolution. Do not upsample small diagnostic renders first.
+        seam_width = min(1024, width)
+        seam_height = max(1, round(height * seam_width / width))
+        owner, seam_fallbacks, exposure_gains = _seam_ownership(working, cameras, rotations, seam_width, seam_height, on_progress=on_progress)
         owner = cv2.resize(owner, (width, height), interpolation=cv2.INTER_NEAREST)
         chosen = np.zeros((height, width, 3), np.uint8)
         chosen_valid = np.zeros((height, width), bool)
@@ -523,7 +534,7 @@ def _render_spherical_photos(working, cameras, rotations, width=4096, height=204
         best_weight = np.zeros((height, width), np.float32)
         fallback_owner = np.full((height, width), -1, np.int16)
         if report is not None:
-            report.update(blending_method='graphcut_multiband', seam_resolution=[512, 256], seam_fallbacks=seam_fallbacks, exposure_gains=exposure_gains.tolist())
+            report.update(renderer_version='spherical-seams-v2', blending_method='graphcut_multiband', seam_resolution=[seam_width, seam_height], seam_fallbacks=seam_fallbacks, exposure_gains=exposure_gains.tolist())
     else:
         accumulated = np.zeros((height, width, 3), np.float32)
         weights = np.zeros((height, width), np.float32)

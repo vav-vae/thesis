@@ -8,6 +8,32 @@ from backend.tests.test_spherical import camera_sweep
 
 
 class SphericalRenderTests(unittest.TestCase):
+    def test_plain_ceiling_exposure_transition_is_not_a_narrow_bright_patch(self):
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 160., 1., 160., 120.
+        images = [np.full((240, 320, 3), value, np.uint8) for value in (100, 160)]
+        rotations = [np.eye(3, dtype=np.float32)] * 2
+        _, evidence, _ = _render_spherical_photos(images, [camera] * 2, rotations, 1536, 768)
+        owner = np.zeros(evidence.shape, np.int16)
+        owner[:, 768:] = 1
+        owner[evidence == 0] = -1
+        result = _blend_source_seams(images, [camera] * 2, rotations, owner, evidence,
+                                     np.ones((2, 3)), np.zeros((768, 1536, 3), np.uint8))
+        # Same geometry, different camera exposure. A five-band blend leaves
+        # most of the 60-level change in this narrow strip on a plain ceiling.
+        self.assertLess(int(result[384, 800, 0]) - int(result[384, 736, 0]), 25)
+        self.assertTrue(np.all(result[evidence == 0] == 0))
+
+    def test_seam_preview_scales_to_the_output_and_reports_its_real_size(self):
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 80., 1., 60., 45.
+        source = np.full((90, 120, 3), 150, np.uint8)
+        report = {}
+        _render_spherical_photos([source], [camera], [np.eye(3, dtype=np.float32)],
+                                 1200, 600, seam_aware=True, report=report)
+        self.assertEqual(report['seam_resolution'], [1024, 512])
+        self.assertEqual(report['renderer_version'], 'spherical-seams-v2')
+
     def test_cropped_blending_preserves_full_region_output(self):
         random = np.random.default_rng(7)
         images = [random.integers(10, 245, (240, 320, 3), np.uint8) for _ in range(3)]

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { collection, deleteDoc, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import {
@@ -23,6 +24,7 @@ import {
 import PanoramaViewer from "@/components/PanoramaViewer";
 import { auth, db } from "@/lib/firebase";
 import { invalidateTourSummaries } from "@/lib/tour-summaries";
+import { tourRegenerationInput } from "@/lib/tour-regeneration";
 
 type Metrics = {
   algorithm?: string;
@@ -45,11 +47,15 @@ type RoomTour = {
   sourceImageCount?: number;
   status?: "published" | "unpublished";
   metrics?: Metrics;
+  sourceImageUrls?: string[];
+  captureViews?: ("around" | "top" | "bottom")[];
+  ransacThreshold?: number;
 };
 
 type PropertyOption = { id: string; title?: string };
 
 export default function VirtualToursPage() {
+  const router = useRouter();
   const [tours, setTours] = useState<RoomTour[]>([]);
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,6 +122,20 @@ export default function VirtualToursPage() {
     } finally { setWorkingId(""); }
   };
 
+  const regenerate = (tour: RoomTour) => {
+    setError("");
+    try {
+      const uid = auth.currentUser?.uid ?? "";
+      const input = tourRegenerationInput(tour, uid);
+      // The capture page restores the durable job, creates it if needed, and
+      // keeps the existing published tour until the broker approves its replacement.
+      localStorage.setItem(`libot:tour-job:v1:${uid}`, JSON.stringify({ id: crypto.randomUUID(), input }));
+      router.push("/broker/create-tour");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "The saved photos could not be loaded.");
+    }
+  };
+
   const saveName = async () => {
     if (!editing || !roomName.trim()) return;
     const duplicate = tours.some((tour) => tour.id !== editing.id && tour.propertyId === editing.propertyId && tour.roomType.trim().toLowerCase() === roomName.trim().toLowerCase());
@@ -150,7 +170,7 @@ export default function VirtualToursPage() {
       {error && <div role="alert" className="mb-6 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AlertCircle className="mt-0.5 shrink-0" size={19} /><p>{error}</p></div>}
       <section className="grid gap-4 sm:grid-cols-3"><Summary label="Total room tours" value={tours.length} /><Summary label="Published" value={publishedCount} accent /><Summary label="Properties with tours" value={new Set(tours.map((tour) => tour.propertyId)).size} /></section>
       <div className="mt-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">Your reconstructed rooms</h2><p className="mt-1 text-sm text-slate-500">Preview quality, control visibility, or rebuild a room.</p></div><label className="relative block sm:w-80"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search property or room" className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-4 text-sm outline-none focus:border-blue-400" /></label></div>
-      {loading ? <div className="mt-7 grid gap-5 md:grid-cols-2"><Skeleton /><Skeleton /></div> : grouped.length ? <div className="mt-7 space-y-7">{grouped.map(([propertyId, propertyTours]) => <section key={propertyId} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-200 px-6 py-5"><div><h3 className="font-semibold">{propertyNames.get(propertyId) || "Unknown property"}</h3><p className="mt-1 text-xs text-slate-500">{propertyTours.length} reconstructed room{propertyTours.length === 1 ? "" : "s"}</p></div><Link href="/broker/create-tour" className="text-xs font-semibold text-blue-600">Add room</Link></div><div className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">{propertyTours.map((tour) => <TourCard key={tour.id} tour={tour} working={workingId === tour.id} onPreview={() => setPreview(tour)} onRename={() => { setEditing(tour); setRoomName(tour.roomType); }} onToggle={() => void toggleStatus(tour)} onDelete={() => setDeleting(tour)} />)}</div></section>)}</div> : <div className="mt-7 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center"><span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-500"><ImageIcon size={30} /></span><h2 className="mt-5 text-xl font-semibold">{search ? "No matching tours" : "No virtual tours yet"}</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">{search ? "Try a different property or room name." : "Reconstruct your first room from overlapping static images."}</p>{!search && <Link href="/broker/create-tour" className="mt-6 inline-flex rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white">Create virtual tour</Link>}</div>}
+      {loading ? <div className="mt-7 grid gap-5 md:grid-cols-2"><Skeleton /><Skeleton /></div> : grouped.length ? <div className="mt-7 space-y-7">{grouped.map(([propertyId, propertyTours]) => <section key={propertyId} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-200 px-6 py-5"><div><h3 className="font-semibold">{propertyNames.get(propertyId) || "Unknown property"}</h3><p className="mt-1 text-xs text-slate-500">{propertyTours.length} reconstructed room{propertyTours.length === 1 ? "" : "s"}</p></div><Link href="/broker/create-tour" className="text-xs font-semibold text-blue-600">Add room</Link></div><div className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">{propertyTours.map((tour) => <TourCard key={tour.id} tour={tour} working={workingId === tour.id} onPreview={() => setPreview(tour)} onRename={() => { setEditing(tour); setRoomName(tour.roomType); }} onToggle={() => void toggleStatus(tour)} onRegenerate={() => regenerate(tour)} onDelete={() => setDeleting(tour)} />)}</div></section>)}</div> : <div className="mt-7 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center"><span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-500"><ImageIcon size={30} /></span><h2 className="mt-5 text-xl font-semibold">{search ? "No matching tours" : "No virtual tours yet"}</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">{search ? "Try a different property or room name." : "Reconstruct your first room from overlapping static images."}</p>{!search && <Link href="/broker/create-tour" className="mt-6 inline-flex rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white">Create virtual tour</Link>}</div>}
     </main>
 
     {preview && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"><div className="max-h-[95vh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-slate-200 px-6 py-5"><div><p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Immersive preview</p><h2 className="mt-1 text-xl font-semibold">{preview.roomType}</h2></div><button onClick={() => setPreview(null)} aria-label="Close preview" className="rounded-xl p-2 text-slate-500 hover:bg-slate-100"><X /></button></div><div className="p-4 sm:p-6"><PanoramaViewer panorama={preview.panoramaUrl} caption={`${propertyNames.get(preview.propertyId) || "Property"} · ${preview.roomType}`} /><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Algorithm" value={preview.algorithm || preview.metrics?.algorithm || "—"} /><Metric label="Quality" value={qualityLabel(preview.metrics)} /><Metric label="Source images" value={String(preview.sourceImageCount ?? "—")} /><Metric label="Output" value={preview.metrics?.output_width ? `${preview.metrics.output_width}×${preview.metrics.output_height}` : "—"} /></div></div></div></div>}
@@ -159,10 +179,10 @@ export default function VirtualToursPage() {
   </div>;
 }
 
-function TourCard({ tour, working, onPreview, onRename, onToggle, onDelete }: { tour: RoomTour; working: boolean; onPreview: () => void; onRename: () => void; onToggle: () => void; onDelete: () => void }) {
+function TourCard({ tour, working, onPreview, onRename, onToggle, onRegenerate, onDelete }: { tour: RoomTour; working: boolean; onPreview: () => void; onRename: () => void; onToggle: () => void; onRegenerate: () => void; onDelete: () => void }) {
   const published = (tour.status ?? "published") === "published";
   const processing = ((tour.metrics?.total_processing_ms ?? tour.metrics?.processing_ms ?? 0) / 1000).toFixed(2);
-  return <article className="overflow-hidden rounded-2xl border border-slate-200"><button onClick={onPreview} className="group relative block h-36 w-full overflow-hidden bg-slate-950 text-left"><div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-slate-900 to-slate-950" /><div className="absolute inset-0 flex items-center justify-center"><Eye className="text-white/70 transition group-hover:scale-110" size={31} /></div><span className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-semibold ${published ? "bg-emerald-400 text-emerald-950" : "bg-white/15 text-white"}`}>{published ? "PUBLISHED" : "HIDDEN"}</span></button><div className="p-4"><div className="flex items-start justify-between gap-3"><div><h4 className="font-semibold">{tour.roomType}</h4><p className="mt-1 text-xs text-slate-500">{tour.algorithm || tour.metrics?.algorithm || "Computer vision"} reconstruction</p></div><span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${qualityStyle(tour.metrics)}`}>{qualityLabel(tour.metrics)}</span></div><div className="mt-4 flex gap-4 text-[11px] text-slate-500"><span className="flex items-center gap-1"><ImageIcon size={13} />{tour.sourceImageCount ?? "—"} images</span><span className="flex items-center gap-1"><Clock3 size={13} />{processing}s</span></div><div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-200 pt-4"><button onClick={onPreview} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"><Eye size={14} />Preview</button><button onClick={onRename} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600"><Pencil size={14} />Rename</button><button onClick={onToggle} disabled={working} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-50">{working ? <LoaderCircle className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}{published ? "Unpublish" : "Publish"}</button><Link href="/broker/create-tour" className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600"><RefreshCw size={14} />Regenerate</Link></div><button onClick={onDelete} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"><Trash2 size={14} />Delete tour</button></div></article>;
+  return <article className="overflow-hidden rounded-2xl border border-slate-200"><button onClick={onPreview} className="group relative block h-36 w-full overflow-hidden bg-slate-950 text-left"><div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-slate-900 to-slate-950" /><div className="absolute inset-0 flex items-center justify-center"><Eye className="text-white/70 transition group-hover:scale-110" size={31} /></div><span className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-semibold ${published ? "bg-emerald-400 text-emerald-950" : "bg-white/15 text-white"}`}>{published ? "PUBLISHED" : "HIDDEN"}</span></button><div className="p-4"><div className="flex items-start justify-between gap-3"><div><h4 className="font-semibold">{tour.roomType}</h4><p className="mt-1 text-xs text-slate-500">{tour.algorithm || tour.metrics?.algorithm || "Computer vision"} reconstruction</p></div><span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${qualityStyle(tour.metrics)}`}>{qualityLabel(tour.metrics)}</span></div><div className="mt-4 flex gap-4 text-[11px] text-slate-500"><span className="flex items-center gap-1"><ImageIcon size={13} />{tour.sourceImageCount ?? "—"} images</span><span className="flex items-center gap-1"><Clock3 size={13} />{processing}s</span></div><div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-200 pt-4"><button onClick={onPreview} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"><Eye size={14} />Preview</button><button onClick={onRename} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600"><Pencil size={14} />Rename</button><button onClick={onToggle} disabled={working} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-50">{working ? <LoaderCircle className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}{published ? "Unpublish" : "Publish"}</button><button type="button" onClick={onRegenerate} disabled={working} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-50"><RefreshCw size={14} />Regenerate</button></div><button onClick={onDelete} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"><Trash2 size={14} />Delete tour</button></div></article>;
 }
 
 function qualityScore(metrics?: Metrics) { return metrics?.coverage_ratio ?? metrics?.average_inlier_ratio ?? 0; }
