@@ -91,8 +91,8 @@ def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None):
     # agreement, rather than trusting one greedy spanning tree.
     random = np.random.default_rng(42)
     positions = {index: position for position, index in enumerate(sorted(allowed))}
-    best_score, transforms, consistent = -1., {}, []
-    for trial in range(48):
+    best_score, transforms, consistent, connected = None, {}, [], set()
+    for trial in range(192):
         jitter = np.ones((len(allowed), len(allowed))) if trial == 0 else np.exp(random.normal(0, 1.2, (len(allowed), len(allowed))))
         candidate = tree(jitter)
         accepted = []
@@ -103,23 +103,25 @@ def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None):
             error = float(np.median(np.linalg.norm(predicted - target, axis=1)))
             if error <= 5:
                 accepted.append((first, second, error, len(source)))
-        score = sum(min(n, 100) / (1 + error) for _, _, error, n in accepted)
-        if score > best_score:
-            best_score, transforms, consistent = score, candidate, accepted
-    connected = {anchor}
-    while True:
-        reached = connected | {j for i, j, _, _ in consistent if i in connected} | {i for i, j, _, _ in consistent if j in connected}
-        if reached == connected:
-            break
-        connected = reached
-    # A branch supported by only its own tree edge has no independent
-    # verification. Keep the reference-connected cycle core for the cap.
-    while True:
-        degree = {i: sum(1 for a, b, _, _ in consistent if a in connected and b in connected and i in (a, b)) for i in connected}
-        remove = {i for i in connected if i != anchor and degree[i] < 2}
-        if not remove:
-            break
-        connected -= remove
+        core = {anchor}
+        while True:
+            reached = core | {j for i, j, _, _ in accepted if i in core} | {i for i, j, _, _ in accepted if j in core}
+            if reached == core:
+                break
+            core = reached
+        # Count only independent cycle support. A high-count false match
+        # must not beat a larger, more consistently aligned ceiling region.
+        while True:
+            degree = {i: sum(1 for a, b, _, _ in accepted if a in core and b in core and i in (a, b)) for i in core}
+            remove = {i for i in core if i != anchor and degree[i] < 2}
+            if not remove:
+                break
+            core -= remove
+        supported = [edge for edge in accepted if edge[0] in core and edge[1] in core]
+        residuals = [edge[2] for edge in supported]
+        score = (len(core), len(supported), -float(np.median(residuals)) if residuals else -np.inf)
+        if best_score is None or score > best_score:
+            best_score, transforms, consistent, connected = score, candidate, supported, core
     transforms = {i: matrix for i, matrix in transforms.items() if i in connected}
     errors = [error for i, j, error, _ in consistent if i in connected and j in connected]
     quality = {
