@@ -59,7 +59,7 @@ def analyze_image_sequence(
     if prepared is None:
         detector, norm, ratio_threshold = _detector_and_norm(algorithm)
         prepared = prepare_spherical_matches(
-            images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress
+            images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress, capture_views=capture_views
         )
     names = list(filenames or [f"Image {index}" for index in range(1, len(images) + 1)])
     reliable_images = {
@@ -438,11 +438,13 @@ def reconstruct_hybrid_panorama(
     started = perf_counter()
     detector, norm, ratio_threshold = _detector_and_norm(algorithm)
     prepared = prepare_spherical_matches(
-        images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress
+        images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress, capture_views=capture_views
     )
+    quality_started = perf_counter()
     analysis = analyze_image_sequence(
         images, filenames, algorithm, ransac_threshold, prepared=prepared, capture_views=capture_views
     )
+    quality_ms = round((perf_counter() - quality_started) * 1000, 2)
     if not analysis["can_stitch"]:
         if analysis["issues"]:
             raise StitchingError(analysis["issues"][0]["message"])
@@ -462,6 +464,7 @@ def reconstruct_hybrid_panorama(
         on_progress=on_progress,
     )
     pair_reports = [{**report, **{key: used_indices[report[key]] for key in ("from_index", "to_index") if key in report}} for report in pair_reports]
+    completion_started = perf_counter()
     if fill_gaps:
         if on_progress:
             on_progress("Finalizing the tour")
@@ -503,6 +506,14 @@ def reconstruct_hybrid_panorama(
         "output_width": int(final.shape[1]),
         "output_height": int(final.shape[0]),
         "total_processing_ms": round((perf_counter() - started) * 1000, 2),
+        "stage_timings_ms": {
+            "feature_extraction": getattr(prepared, 'matching_stats', {}).get('feature_extraction_ms', 0),
+            "pair_matching": camera_report.get('matching_report', {}).get('pair_matching_ms', 0),
+            "quality_checks": quality_ms,
+            "camera_alignment": camera_report.get('camera_estimation_ms', 0),
+            "rendering": camera_report.get('rendering_ms', 0),
+            "gap_completion": round((perf_counter() - completion_started) * 1000, 2),
+        },
         "reconstruction_confidence": round(confidence, 4),
         "evidence_coverage_ratio": round(evidence_ratio, 6),
         "average_inlier_ratio": round(average_inlier, 4),

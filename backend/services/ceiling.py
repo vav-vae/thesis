@@ -12,7 +12,7 @@ def project_points(matrix, points):
     return projected[:, :2] / projected[:, 2:3]
 
 
-def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None):
+def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None, *, keypoints=None, intrinsics=None):
     """Map each supported source into the anchor photo's pixel coordinates.
 
     A rotation-only fit cannot describe translation against a nearby ceiling.
@@ -22,7 +22,10 @@ def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None):
     """
     allowed = set(indices)
     count = len(prepared.features)
-    points = {i: np.array([p.pt for p in prepared.features[i].keypoints], np.float64) for i in allowed}
+    points = keypoints if keypoints is not None else {i: np.array([p.pt for p in prepared.features[i].keypoints], np.float64) for i in allowed}
+    if cameras is not None:
+        intrinsics = intrinsics if intrinsics is not None else {i: cameras[i].K() for i in allowed}
+        inverse_intrinsics = {i: np.linalg.inv(matrix) for i, matrix in intrinsics.items()}
     graph = {i: [] for i in allowed}
     edges = []
     for report in prepared.reports:
@@ -37,7 +40,7 @@ def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None):
         target = points[second][[p.trainIdx for p in pairs]]
         if cameras is not None and rotations is not None:
             # Exclude wall/floor features from the ceiling-plane estimate.
-            rays = np.column_stack((source, np.ones(len(source)))) @ np.linalg.inv(cameras[first].K()).T @ rotations[first].T
+            rays = np.column_stack((source, np.ones(len(source)))) @ inverse_intrinsics[first].T @ rotations[first].T
             keep = -rays[:, 1] / np.linalg.norm(rays, axis=1) > np.cos(np.deg2rad(66))
             source, target = source[keep], target[keep]
         if len(source) < 12:
@@ -53,7 +56,7 @@ def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None):
         if residual > 2 or np.linalg.det(matrix) <= 0:
             continue
         if cameras is not None and rotations is not None:
-            rotation_fit = cameras[second].K() @ rotations[second].T @ rotations[first] @ np.linalg.inv(cameras[first].K())
+            rotation_fit = intrinsics[second] @ rotations[second].T @ rotations[first] @ inverse_intrinsics[first]
             drift = np.median(np.linalg.norm(project_points(rotation_fit, source) - target, axis=1))
             if drift > .04 * max(prepared.features[second].img_size):
                 continue
@@ -92,14 +95,17 @@ def fit_ceiling_plane(prepared, indices, anchor, cameras=None, rotations=None):
     random = np.random.default_rng(42)
     positions = {index: position for position, index in enumerate(sorted(allowed))}
     best_score, transforms, consistent, connected = None, {}, [], set()
+    homogeneous_sources = {(i, j): np.column_stack((source, np.ones(len(source)))) for i, j, source, _ in edges}
     for trial in range(192):
         jitter = np.ones((len(allowed), len(allowed))) if trial == 0 else np.exp(random.normal(0, 1.2, (len(allowed), len(allowed))))
         candidate = tree(jitter)
+        inverse_candidate = {i: np.linalg.inv(matrix) for i, matrix in candidate.items()}
         accepted = []
         for first, second, source, target in edges:
             if first not in candidate or second not in candidate:
                 continue
-            predicted = project_points(np.linalg.inv(candidate[second]) @ candidate[first], source)
+            projected = homogeneous_sources[first, second] @ (inverse_candidate[second] @ candidate[first]).T
+            predicted = projected[:, :2] / projected[:, 2:3]
             error = float(np.median(np.linalg.norm(predicted - target, axis=1)))
             if error <= 5:
                 accepted.append((first, second, error, len(source)))
@@ -146,7 +152,11 @@ def correct_ceiling(prepared, cameras, rotations, capture_views, panorama, evide
         return panorama, evidence, {**skipped, 'reason': 'No measured overhead reference'}
     if on_progress:
         on_progress('Aligning ceiling details to the overhead reference')
-    transforms, quality = fit_ceiling_plane(prepared, indices, anchor, cameras, rotations)
+    # OpenCV's keypoints property copies its whole native vector. Convert
+    # once per photo, never once for each matched point in each report.
+    points = {i: np.array([p.pt for p in prepared.features[i].keypoints], np.float64) for i in indices}
+    intrinsics = {i: cameras[i].K() for i in indices}
+    transforms, quality = fit_ceiling_plane(prepared, indices, anchor, cameras, rotations, keypoints=points, intrinsics=intrinsics)
     if not quality['valid']:
         return panorama, evidence, {**quality, **skipped, 'reason': 'Ceiling matches do not form a consistent plane'}
     # This is a local correction for parallax, not a replacement of an already
@@ -159,11 +169,11 @@ def correct_ceiling(prepared, cameras, rotations, capture_views, panorama, evide
             continue
         match = prepared.pairwise[i * count + j]
         pairs = [p for p, valid in zip(match.getMatches(), match.getInliers()) if valid]
-        source = np.array([prepared.features[i].keypoints[p.queryIdx].pt for p in pairs])
-        target = np.array([prepared.features[j].keypoints[p.trainIdx].pt for p in pairs])
+        source = points[i][[p.queryIdx for p in pairs]]
+        target = points[j][[p.trainIdx for p in pairs]]
         if not len(source):
             continue
-        matrix = cameras[j].K() @ rotations[j].T @ rotations[i] @ np.linalg.inv(cameras[i].K())
+        matrix = intrinsics[j] @ rotations[j].T @ rotations[i] @ np.linalg.inv(intrinsics[i])
         residuals.append(float(np.median(np.linalg.norm(project_points(matrix, source) - target, axis=1))))
     rotation_error = float(np.median(residuals)) if residuals else 0.
     quality['rotation_residual_px'] = round(rotation_error, 3)
@@ -174,8 +184,8 @@ def correct_ceiling(prepared, cameras, rotations, capture_views, panorama, evide
     # A homography maps each source onto the reference plane. Combine its
     # inverse with the reference's MEASURED orientation to sample the sphere.
     projections = [
-        (np.linalg.inv(cameras[i].K()) @ np.linalg.inv(transforms[i])
-         @ cameras[anchor].K() @ rotations[anchor].T).T.astype(np.float32)
+        (np.linalg.inv(intrinsics[i]) @ np.linalg.inv(transforms[i])
+         @ intrinsics[anchor] @ rotations[anchor].T).T.astype(np.float32)
         for i in selected
     ]
     progress = (lambda stage: on_progress(f'Ceiling: {stage}')) if on_progress else None

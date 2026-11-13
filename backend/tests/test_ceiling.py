@@ -27,6 +27,29 @@ def ceiling_fixture(count=7, corrupt=False):
 
 
 class CeilingTests(unittest.TestCase):
+    def test_each_native_keypoint_vector_is_converted_once_per_correction(self):
+        prepared, _, _ = ceiling_fixture(7)
+        class NativeFeature:
+            def __init__(self, source):
+                self.points, self.img_size, self.reads = source.keypoints, source.img_size, 0
+            @property
+            def keypoints(self):
+                self.reads += 1
+                return list(self.points)
+        prepared.features = [NativeFeature(f) for f in prepared.features]
+        cameras = []
+        for _ in range(7):
+            camera = cv2.detail.CameraParams()
+            camera.focal, camera.aspect, camera.ppx, camera.ppy = 200., 1., 160., 120.
+            cameras.append(camera)
+        rotations = [cv2.Rodrigues(np.float64([np.pi / 2, 0, 0]))[0].astype(np.float32)] * 7
+        image = np.full((180, 360, 3), 120, np.uint8)
+        evidence = np.full((180, 360), 255, np.uint8)
+        with patch('backend.services.spherical._render_spherical_photos', return_value=(image, evidence, 0)):
+            _, _, report = correct_ceiling(prepared, cameras, rotations, ['top'] * 7, image, evidence)
+        self.assertTrue(report['applied'], report)
+        self.assertTrue(all(feature.reads == 1 for feature in prepared.features))
+
     def test_repeated_trim_false_links_do_not_split_the_reference_plane(self):
         prepared, truth, points = ceiling_fixture(corrupt=True)
         transforms, quality = fit_ceiling_plane(prepared, list(range(7)), 0)

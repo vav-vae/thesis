@@ -1,7 +1,7 @@
 """Bounded spherical reconstruction for photographs taken from one position."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Callable
 
@@ -18,6 +18,8 @@ class SphericalMatches:
     pairwise: list
     reports: list[dict]
     components: list[list[int]]
+    deferred_pairs: list[tuple[int, int]] = field(default_factory=list)
+    matching_stats: dict = field(default_factory=dict)
 
 
 def _native_pairwise(features):
@@ -53,7 +55,8 @@ def subset_spherical_matches(prepared: SphericalMatches, indices: list[int]):
         for report in prepared.reports
         if report["from_index"] in remap and report["to_index"] in remap
     ]
-    return SphericalMatches([prepared.working[index] for index in indices], features, pairwise, reports, [list(range(count))])
+    deferred = [(remap[first], remap[second]) for first, second in getattr(prepared, 'deferred_pairs', []) if first in remap and second in remap]
+    return SphericalMatches([prepared.working[index] for index in indices], features, pairwise, reports, [list(range(count))], deferred, dict(getattr(prepared, 'matching_stats', {})))
 
 
 def _alignment_sample(matches, mask, keypoints, image_size, limit=200):
@@ -101,24 +104,50 @@ def _rotation_condition(homography, first_size, second_size):
     return best
 
 
-def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_threshold=4.0, *, on_progress: Callable[[str], None] | None = None):
-    """Match all source pairs at the resolution used for camera estimation.
+def _probe_has_overlap(search, first_descriptors, probe_ids, first_points, second_points, first_size, second_size, ratio_threshold, tolerance):
+    pairs = search.knnMatch(first_descriptors[probe_ids], k=2)
+    good = [pair[0] for pair in pairs if len(pair) == 2 and pair[0].distance < ratio_threshold * pair[1].distance]
+    if len(good) < 8:
+        return False
+    source = first_points[[probe_ids[match.queryIdx] for match in good]] - np.float32(first_size) / 2
+    target = second_points[[match.trainIdx for match in good]] - np.float32(second_size) / 2
+    matrix, mask = cv2.findHomography(source, target, cv2.USAC_MAGSAC, tolerance, maxIters=1000, confidence=.99)
+    return (matrix is not None and mask is not None and int(mask.sum()) >= 6
+            and _rotation_condition(matrix, first_size, second_size) <= 2.5)
 
-    Reports contain accepted alignment edges only. Nonadjacent uploads can
-    connect a set; absent edges are not individual image-quality failures.
+
+def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_threshold=4.0, *, on_progress: Callable[[str], None] | None = None, capture_views=None, prepared=None, full_search=False):
+    """Reuse features and screen opposing caps before expensive full matching.
+
+    Same-view and surrounding-ring comparisons always use the original search.
+    Deferred opposite-cap pairs are restored if connectivity/support or the
+    subsequent camera fit fails. No photo or quality threshold is removed.
     """
-    working = []
-    for image in images:
-        height, width = image.shape[:2]
-        scale = min(1.0, 1600 / max(height, width))
-        working.append(cv2.resize(image, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA))
-    features = []
-    for index, image in enumerate(working):
-        if on_progress:
-            on_progress(f"Finding detail in photo {index + 1} of {len(working)}")
-        feature = cv2.detail.computeImageFeatures2(detector, image)
-        feature.img_idx = index
-        features.append(feature)
+    feature_started = perf_counter()
+    if prepared is None:
+        working = []
+        for image in images:
+            height, width = image.shape[:2]
+            scale = min(1.0, 1600 / max(height, width))
+            working.append(image if scale == 1.0 else cv2.resize(image, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA))
+        features = []
+        for index, image in enumerate(working):
+            if on_progress:
+                on_progress(f"Finding detail in photo {index + 1} of {len(working)}")
+            feature = cv2.detail.computeImageFeatures2(detector, image)
+            feature.img_idx = index
+            features.append(feature)
+        pairwise = _native_pairwise(features)
+        reports = []
+        requested_pairs = None
+        previous_stats = {}
+    else:
+        working, features, pairwise = prepared.working, prepared.features, prepared.pairwise
+        reports = list(prepared.reports)
+        requested_pairs = set(prepared.deferred_pairs)
+        previous_stats = prepared.matching_stats
+    feature_ms = previous_stats.get('feature_extraction_ms', round((perf_counter() - feature_started) * 1000, 2))
+    matching_started = perf_counter()
     count = len(features)
     descriptors = [feature.descriptors.get() for feature in features]
     # Cache the Python keypoint conversion once per image. Accessing the
@@ -126,15 +155,23 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
     keypoints = [np.array([point.pt for point in feature.keypoints], np.float32) for feature in features]
     # The estimator requires matcher-owned native MatchesInfo objects. An
     # empty mask creates those objects without running a duplicate pair pass.
-    pairwise = _native_pairwise(features)
     graph = [set() for _ in features]
-    reports = []
+    for report in reports:
+        first, second = report['from_index'], report['to_index']
+        graph[first].add(second)
+        graph[second].add(first)
     matcher = cv2.BFMatcher(norm)
     indexes = {}
+    deferred_pairs = []
+    full_pairs_checked = previous_stats.get('full_pairs_checked', 0)
+    use_probe = not full_search and norm == cv2.NORM_L2 and count > 40 and capture_views is not None and len(capture_views) == count
+    probe_ids = {}
     for first in range(count):
         if on_progress:
             on_progress(f"Checking overlap for photo {first + 1} of {count}")
         for second in range(first + 1, count):
+            if requested_pairs is not None and (first, second) not in requested_pairs:
+                continue
             pair_started = perf_counter()
             a, b = features[first], features[second]
             first_descriptors, second_descriptors = descriptors[first], descriptors[second]
@@ -154,9 +191,26 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
                     search.add([second_descriptors])
                     search.train()
                     indexes[second] = search
+                if use_probe and {capture_views[first], capture_views[second]} == {'top', 'bottom'}:
+                    if first not in probe_ids:
+                        cells = {}
+                        width, height = a.img_size
+                        raw_points = a.keypoints
+                        ordered = sorted(range(len(raw_points)), key=lambda i: -raw_points[i].response)
+                        for index in ordered:
+                            x, y = keypoints[first][index]
+                            cells.setdefault((min(15, int(x * 16 / width)), min(11, int(y * 12 / height))), index)
+                        selected = list(cells.values())[:192]
+                        selected_set = set(selected)
+                        selected.extend(index for index in ordered if index not in selected_set)
+                        probe_ids[first] = selected[:192]
+                    if not _probe_has_overlap(indexes[second], first_descriptors, probe_ids[first], keypoints[first], keypoints[second], a.img_size, b.img_size, ratio_threshold, ransac_threshold):
+                        deferred_pairs.append((first, second))
+                        continue
                 candidates = indexes[second].knnMatch(first_descriptors, k=2)
             else:
                 candidates = matcher.knnMatch(first_descriptors, second_descriptors, k=2)
+            full_pairs_checked += 1
             good = [pair[0] for pair in candidates if len(pair) == 2 and pair[0].distance < ratio_threshold * pair[1].distance]
             if len(good) < 10:
                 continue
@@ -167,8 +221,10 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
                 continue
             inliers = int(mask.sum())
             confidence = inliers / (8 + .3 * len(good))
+            if inliers < 15 or inliers / len(good) < .2:
+                continue
             condition = _rotation_condition(homography, a.img_size, b.img_size)
-            if inliers < 15 or inliers / len(good) < .2 or condition > 2.5:
+            if condition > 2.5:
                 continue
             try:
                 inverse = np.linalg.inv(homography)
@@ -209,7 +265,32 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
                 pending.append(neighbour)
         components.append(sorted(reached))
         remaining.difference_update(reached)
-    return SphericalMatches(working, features, pairwise, reports, components)
+    stats = {
+        'total_possible_pairs': previous_stats.get('total_possible_pairs', count * (count - 1) // 2),
+        'full_pairs_checked': full_pairs_checked,
+        'opposite_view_pairs_deferred': len(deferred_pairs),
+        'expanded_full_search': bool(full_search and requested_pairs),
+        'feature_extraction_ms': feature_ms,
+        'pair_matching_ms': round(previous_stats.get('pair_matching_ms', 0) + (perf_counter() - matching_started) * 1000, 2),
+    }
+    result = SphericalMatches(working, features, pairwise, reports, components, deferred_pairs, stats)
+    if deferred_pairs and len(components) != 1:
+        component_of = {index: group for group, component in enumerate(components) for index in component}
+        bridges = [pair for pair in deferred_pairs if component_of[pair[0]] != component_of[pair[1]]]
+        if bridges:
+            if on_progress:
+                on_progress("Expanding overlap search to verify disconnected photos")
+            # Only untested cross-component edges can change connectivity.
+            # Keep the remaining deferred edges available for camera recovery.
+            result.deferred_pairs = bridges
+            expanded = prepare_spherical_matches([], detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress, prepared=result, full_search=True)
+            bridge_set = set(bridges)
+            expanded.deferred_pairs = [pair for pair in deferred_pairs if pair not in bridge_set]
+            expanded.matching_stats['opposite_view_pairs_deferred'] = len(expanded.deferred_pairs)
+            expanded.matching_stats['expanded_full_search'] = not expanded.deferred_pairs
+            expanded.matching_stats['connectivity_pairs_checked'] = len(bridges)
+            return expanded
+    return result
 
 
 def _copy_cameras(cameras):
@@ -637,7 +718,7 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
 
     started = perf_counter()
     if prepared is None:
-        prepared = prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress)
+        prepared = prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress, capture_views=capture_views)
     working, features, pairwise, reports = prepared.working, prepared.features, prepared.pairwise, prepared.reports
     if len(prepared.components) != 1:
         groups = '; '.join(', '.join(str(index + 1) for index in group) for group in prepared.components)
@@ -646,7 +727,16 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
     try:
         if on_progress:
             on_progress("Estimating camera positions")
-        cameras, alignment_report = _refine_cameras(prepared, on_progress)
+        try:
+            cameras, alignment_report = _refine_cameras(prepared, on_progress)
+        except StitchingError:
+            if not getattr(prepared, 'deferred_pairs', []):
+                raise
+            if on_progress:
+                on_progress("Expanding overlap search to recover camera alignment")
+            prepared = prepare_spherical_matches([], detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress, prepared=prepared, full_search=True)
+            working, features, pairwise, reports = prepared.working, prepared.features, prepared.pairwise, prepared.reports
+            cameras, alignment_report = _refine_cameras(prepared, on_progress)
         # Level using the surrounding ring only: ceiling/floor cameras must not
         # pull the horizon toward their tilted viewing directions. Labels guide
         # leveling, never fabricate camera poses or bypass matching.
@@ -671,6 +761,7 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
     return panorama, evidence, reports, {
         **alignment_report,
         **render_report,
+        'matching_report': getattr(prepared, 'matching_stats', {}),
         'working_max_dimension': 1600,
         'render_sample_count': render_samples,
         'render_full_sample_count': width * height * len(working),
