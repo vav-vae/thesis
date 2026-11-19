@@ -29,7 +29,7 @@ export default function SafeImage({
   // Let the browser load those delivery URLs directly, as it did before.
   const optimized = src.startsWith("/");
   if (optimized) {
-    return <Image src={src} alt={alt} fill={fill} width={fill ? undefined : width ?? 800} height={fill ? undefined : height ?? 600} sizes={sizes ?? (fill ? "100vw" : undefined)} className={className} preload={priority} style={style} />;
+    return <Image src={src} alt={alt} fill={fill} width={fill ? undefined : width ?? 800} height={fill ? undefined : height ?? 600} sizes={sizes ?? (fill ? "100vw" : undefined)} className={className} preload={priority} style={style} unoptimized />;
   }
   if (fill) {
     return (
