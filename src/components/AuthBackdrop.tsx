@@ -1,15 +1,18 @@
 import AppLogo from "@/components/AppLogo";
+import Link from "next/link";
+import LoginTourVideo from "@/components/LoginTourVideo";
 
-export default function AuthBackdrop() {
+export default function AuthBackdrop({ showTour = false }: { showTour?: boolean }) {
   return (
-    <aside className="auth-backdrop" aria-label="LiBot">
-      <video autoPlay muted loop playsInline preload="metadata" poster="/background.png" aria-hidden="true" tabIndex={-1}>
-        <source src="/login-background.mp4" type="video/mp4" />
-      </video>
-      <div className="auth-backdrop-shade" />
-      <div className="auth-brand">
+    <aside className="auth-backdrop" aria-label="About LiBot">
+      {showTour && <LoginTourVideo />}
+      <Link href="/" className="auth-brand">
         <AppLogo className="h-11 w-11 object-contain" alt="" />
         <span>LiBot</span>
+      </Link>
+      <div className="auth-backdrop-copy">
+        <p>Explore properties in 360°</p>
+        <p>Look around before you book a viewing.</p>
       </div>
     </aside>
   );

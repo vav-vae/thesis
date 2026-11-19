@@ -29,6 +29,7 @@ import { AMENITY_LABELS } from "@/lib/propertyAmenities";
 import PanoramaViewer from "@/components/PanoramaViewer";
 import ReportButton from "@/components/ReportButton";
 import SafeImage from "@/components/SafeImage";
+import { ThemeToggle } from "@/components/ThemeController";
 
 const PropertyLocationMap = dynamic(() => import("@/components/PropertyLocationMap"), { ssr: false });
 import {
@@ -370,7 +371,7 @@ export default function PropertyDetailsPage({
   const photoUrls = roomImages.flatMap((room) => room.imageUrls ?? []);
 
   return (
-    <div className="min-h-screen bg-[#faf8f3]">
+    <div className="min-h-screen bg-slate-50">
       {/* Header */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:p-6">
@@ -379,14 +380,15 @@ export default function PropertyDetailsPage({
             className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
           >
             <ChevronLeft size={20} />
-            <span className="font-medium">Back</span>
+            <span className="font-medium">Browse properties</span>
           </Link>
 
-          <div className="flex items-center gap-3">
-            <button onClick={() => void shareListing()} aria-label="Share property" className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <button onClick={() => void shareListing()} aria-label="Share property" className="ui-icon-button">
               <Share2 size={20} className="text-slate-600" />
             </button>
-            <button aria-label={favorites.has(id) ? "Remove from favorites" : "Add to favorites"} disabled={isUpdating(id)} onClick={() => void toggleFavorite(id)} className="p-2 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-60">
+            <button aria-label={favorites.has(id) ? "Remove from favorites" : "Add to favorites"} aria-pressed={favorites.has(id)} disabled={isUpdating(id)} onClick={() => void toggleFavorite(id)} className="ui-icon-button">
               <Heart size={20} className={favorites.has(id) ? "fill-red-500 text-red-500" : "text-slate-600"} />
             </button>
           </div>
@@ -427,7 +429,7 @@ export default function PropertyDetailsPage({
         <aside className="sticky top-24 hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:block"><p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Property broker</p><h2 className="mt-2 text-lg font-semibold text-slate-900">Interested in this property?</h2><p className="mt-2 text-sm text-slate-500">Ask a question or arrange a viewing.</p><button onClick={() => { setOfferAmount(property.price ?? ""); setOfferMessage(""); setOfferError(""); setOfferOpen(true); }} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white"><Handshake size={17} />Contact Broker</button><button onClick={() => { setScheduleError(""); setScheduleOpen(true); }} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700"><CalendarDays size={17} />Schedule viewing</button></aside>
         </div>
       </main>
-      {photosOpen && <div role="dialog" aria-modal="true" aria-label="All property photos" className="fixed inset-0 z-[80] overflow-y-auto bg-[#faf8f3] text-slate-900"><div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 sm:px-8"><button ref={photosCloseButton} onClick={() => setPhotosOpen(false)} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-slate-100"><ChevronLeft size={18} />Back to listing</button><span className="text-sm font-semibold">{roomImages.reduce((total, room) => total + (room.imageUrls?.length ?? 0), 0)} photos</span></div><div className="mx-auto max-w-5xl space-y-10 px-4 py-8 sm:px-8"><h2 className="text-2xl font-semibold">{property.title || "Property"} photos</h2>{roomImages.map((room) => <section key={room.id}><h3 className="mb-4 text-lg font-semibold">{room.roomType || "Room"}</h3><div className="grid gap-3 sm:grid-cols-2">{room.imageUrls?.map((url, index) => <div key={`${url}:${index}`} className="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-200"><SafeImage src={url} alt={`${room.roomType || "Room"} photo ${index + 1}`} fill sizes="(min-width: 640px) 50vw, 100vw" className="object-cover" /></div>)}</div></section>)}</div></div>}
+      {photosOpen && <div role="dialog" aria-modal="true" aria-label="All property photos" className="fixed inset-0 z-[80] overflow-y-auto bg-slate-50 text-slate-900"><div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 sm:px-8"><button ref={photosCloseButton} onClick={() => setPhotosOpen(false)} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-slate-100"><ChevronLeft size={18} />Back to listing</button><span className="text-sm font-semibold">{roomImages.reduce((total, room) => total + (room.imageUrls?.length ?? 0), 0)} photos</span></div><div className="mx-auto max-w-5xl space-y-10 px-4 py-8 sm:px-8"><h2 className="text-2xl font-semibold">{property.title || "Property"} photos</h2>{roomImages.map((room) => <section key={room.id}><h3 className="mb-4 text-lg font-semibold">{room.roomType || "Room"}</h3><div className="grid gap-3 sm:grid-cols-2">{room.imageUrls?.map((url, index) => <div key={`${url}:${index}`} className="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-200"><SafeImage src={url} alt={`${room.roomType || "Room"} photo ${index + 1}`} fill sizes="(min-width: 640px) 50vw, 100vw" className="object-cover" /></div>)}</div></section>)}</div></div>}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white p-3 shadow-lg lg:hidden"><button onClick={() => { setOfferAmount(property.price ?? ""); setOfferMessage(""); setOfferError(""); setOfferOpen(true); }} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white"><Handshake size={18} />Contact Broker</button></div>
       {tourOpen && <div role="dialog" aria-modal="true" aria-label="Virtual tour" className="fixed inset-0 z-[80] flex flex-col bg-slate-950 text-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/15 px-4 py-3 sm:px-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-teal-200">{tourLabel(roomTours.find((tour) => tour.id === selectedTourId) ?? roomTours[0])}</p><h2 className="text-lg font-semibold">{property.title || "Virtual tour"}</h2></div><button ref={tourCloseButton} onClick={() => setTourOpen(false)} className="flex items-center gap-2 rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold hover:bg-white/10"><X size={18} />Back to listing</button></div>

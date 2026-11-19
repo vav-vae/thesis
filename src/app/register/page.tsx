@@ -18,6 +18,7 @@ import {
 } from "@/lib/firebase";
 import { uploadDocumentToCloudinary, uploadImageToCloudinary } from "@/lib/cloudinary";
 import AppLogo from "@/components/AppLogo";
+import { ThemeToggle } from "@/components/ThemeController";
 import {
   Eye,
   EyeOff,
@@ -335,10 +336,10 @@ function RegisterForm() {
       <div className={`w-full ${isBroker ? "max-w-4xl xl:max-w-5xl" : "max-w-lg"}`}>
         
         <header className="mb-8">
-          <Link href="/login" className="mb-10 inline-flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-900"><AppLogo className="h-10 w-10 object-contain" alt="" />LiBot</Link>
+          <div className="mb-6 flex items-center justify-between"><Link href="/" className="inline-flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-900"><AppLogo className="h-10 w-10 object-contain" alt="" />LiBot</Link><ThemeToggle /></div>
           <div className="flex items-center justify-between gap-4">
             <h1 className="text-3xl font-medium tracking-tight text-slate-900">{isBroker ? "Broker registration" : "Buyer registration"}</h1>
-            <Link href="/register/choose" className="shrink-0 text-sm text-slate-500 underline underline-offset-4">Change</Link>
+            <Link href="/register/choose" className="shrink-0 text-sm text-slate-500 underline underline-offset-4">Change role</Link>
           </div>
         </header>
         <div className="registration-panel">

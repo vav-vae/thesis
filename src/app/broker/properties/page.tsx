@@ -29,14 +29,6 @@ import {
   Edit,
   Trash2,
   Plus,
-  Menu,
-  X,
-  LayoutDashboard,
-  UploadCloud,
-  Images,
-  UserRound,
-  MessageSquare,
-  Settings,
 } from "lucide-react";
 
 interface Property {
@@ -55,7 +47,6 @@ interface Property {
 export default function BrokerPropertiesPage() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [updatingAvailability, setUpdatingAvailability] = useState<string | null>(null);
 
@@ -137,40 +128,12 @@ export default function BrokerPropertiesPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {sidebarOpen && <button type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-[1px] lg:hidden" />}
-
-      <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-slate-200 bg-white shadow-xl transition-transform duration-300 lg:hidden ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`} aria-hidden={!sidebarOpen}>
-        <div className="flex items-center justify-between border-b border-slate-200 p-6">
-          <div><p className="font-semibold text-slate-900">LiBot Broker</p><p className="text-xs text-slate-500">Property management</p></div>
-          <button type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100"><X size={21} /></button>
-        </div>
-        <nav className="flex-1 space-y-2 overflow-y-auto p-5">
-          <MobileNavLink href="/broker" icon={LayoutDashboard} label="Dashboard" onClick={() => setSidebarOpen(false)} />
-          <MobileNavLink href="/broker/create-tour" icon={UploadCloud} label="Create Virtual Tour" onClick={() => setSidebarOpen(false)} />
-          <MobileNavLink href="/broker/properties" icon={Home} label="My Properties" active onClick={() => setSidebarOpen(false)} />
-          <MobileNavLink href="/broker/virtual-tours" icon={Images} label="Manage Tours" onClick={() => setSidebarOpen(false)} />
-          <MobileNavLink href="/broker/profile" icon={UserRound} label="Profile" onClick={() => setSidebarOpen(false)} />
-          <MobileNavLink href="/broker/negotiations" icon={MessageSquare} label="Negotiations" onClick={() => setSidebarOpen(false)} />
-        </nav>
-        <div className="border-t border-slate-200 p-5"><MobileNavLink href="/broker/settings" icon={Settings} label="Settings" onClick={() => setSidebarOpen(false)} /></div>
-      </aside>
-
       {/* Header */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between gap-3 px-4 py-4 sm:p-6">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="rounded-lg p-2 text-slate-700 transition-colors hover:bg-slate-100 hover:text-blue-600 lg:hidden"
-            >
-              {sidebarOpen ? (
-                <X size={24} />
-              ) : (
-                <Menu size={24} />
-              )}
-            </button>
             <div>
-              <h1 className="text-xl font-light text-slate-900 sm:text-2xl">My Properties</h1>
+              <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">My Properties</h1>
               <p className="hidden text-sm text-slate-500 sm:block">Manage your real estate listings</p>
             </div>
           </div>
@@ -337,8 +300,4 @@ export default function BrokerPropertiesPage() {
       </main>
     </div>
   );
-}
-
-function MobileNavLink({ href, icon: Icon, label, active = false, onClick }: { href: string; icon: React.ComponentType<{ size?: number }>; label: string; active?: boolean; onClick: () => void }) {
-  return <Link href={href} onClick={onClick} className={`flex items-center gap-3 rounded-xl px-4 py-3 font-medium transition-colors ${active ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}><Icon size={20} /><span>{label}</span></Link>;
 }

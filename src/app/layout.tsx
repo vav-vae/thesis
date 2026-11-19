@@ -50,9 +50,10 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         <AccountStatusGuard />
-        {children}
-        <SiteFooter />
-        <ThemeController />
+        <ThemeController>
+          {children}
+          <SiteFooter />
+        </ThemeController>
         <PwaRegister />
       </body>
     </html>

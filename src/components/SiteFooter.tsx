@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowUpRight, MapPin } from "lucide-react";
+import { MapPin } from "lucide-react";
 import AppLogo from "@/components/AppLogo";
+import { isPublicBuyerListing } from "@/lib/role-access";
 
 export default function SiteFooter() {
   const pathname = usePathname();
-  if (pathname !== "/" && !pathname.startsWith("/buyer") && !pathname.startsWith("/broker")) return null;
-  const isBroker = pathname.startsWith("/broker");
-  const isBuyer = pathname.startsWith("/buyer");
+  if (pathname !== "/" && !isPublicBuyerListing(pathname)) return null;
 
   return (
     <footer className="bg-[#062f35] text-white">
@@ -20,21 +19,22 @@ export default function SiteFooter() {
               <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white"><AppLogo className="h-9 w-9" /></span>
               <span className="text-xl font-semibold tracking-tight">LiBot</span>
             </Link>
-            <p className="mt-5 max-w-sm text-sm leading-6 text-white/70">{isBroker ? "Manage your properties, virtual tours, and buyer inquiries in one place." : "Find a place worth exploring. Browse properties and step inside with virtual tours."}</p>
             <p className="mt-5 flex items-center gap-2 text-sm text-white/60"><MapPin size={16} />Iloilo, Philippines</p>
           </div>
-          <nav aria-label={isBroker ? "Broker tools" : "Explore"} className="flex flex-col items-start gap-3 text-sm">
-            <h2 className="mb-1 font-semibold text-white">{isBroker ? "Broker tools" : "Explore"}</h2>
-            {isBroker ? <><Link href="/broker/properties" className="text-white/70 transition-colors hover:text-white">My properties</Link><Link href="/broker/virtual-tours" className="text-white/70 transition-colors hover:text-white">Manage tours</Link></> : <><Link href="/buyer/properties" className="text-white/70 transition-colors hover:text-white">Browse properties</Link><Link href="/buyer/properties?tour=1" className="text-white/70 transition-colors hover:text-white">Homes with tours</Link></>}
+          <nav aria-label="Explore" className="flex flex-col items-start gap-3 text-sm">
+            <h2 className="mb-1 font-semibold text-white">Explore</h2>
+            <Link href="/buyer/properties" className="text-white/80 transition-colors hover:text-white">Browse properties</Link>
+            <Link href="/buyer/properties?tour=1" className="text-white/80 transition-colors hover:text-white">Virtual tours</Link>
           </nav>
           <nav aria-label="Account" className="flex flex-col items-start gap-3 text-sm">
             <h2 className="mb-1 font-semibold text-white">Account</h2>
-            {isBroker ? <><Link href="/broker/profile" className="text-white/70 transition-colors hover:text-white">Profile</Link><Link href="/broker/settings" className="text-white/70 transition-colors hover:text-white">Settings</Link></> : isBuyer ? <><Link href="/buyer/profile" className="text-white/70 transition-colors hover:text-white">Profile</Link><Link href="/buyer/settings" className="text-white/70 transition-colors hover:text-white">Settings</Link></> : <><Link href="/login" className="text-white/70 transition-colors hover:text-white">Sign in</Link><Link href="/register/choose" className="text-white/70 transition-colors hover:text-white">Get started</Link></>}
+            <Link href="/login" className="text-white/80 transition-colors hover:text-white">Sign in</Link>
+            <Link href="/register/choose" className="text-white/80 transition-colors hover:text-white">Create an account</Link>
           </nav>
         </div>
         <div className="flex flex-col gap-4 pt-6 text-xs text-white/55 sm:flex-row sm:items-center sm:justify-between">
           <span>© {new Date().getFullYear()} LiBot. All rights reserved.</span>
-          <Link href={isBroker ? "/broker/create-property" : "/buyer/properties"} className="inline-flex items-center gap-1 font-semibold text-white/80 transition-colors hover:text-white">{isBroker ? "Add a property" : "Explore listings"} <ArrowUpRight size={15} /></Link>
+          <Link href="/install" className="font-semibold text-white/80 transition-colors hover:text-white">Install LiBot</Link>
         </div>
       </div>
     </footer>

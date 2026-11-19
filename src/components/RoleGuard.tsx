@@ -5,14 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
-import { canAccessRole, roleHome, type AccountRole } from "@/lib/role-access";
+import { canAccessRole, isPublicBuyerListing, roleHome, type AccountRole } from "@/lib/role-access";
 
 export default function RoleGuard({ role, children }: { role: AccountRole; children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [access, setAccess] = useState<{ uid: string; allowed: boolean; error?: boolean } | null>(null);
   // Listings remain public; personal buyer pages require the buyer role.
-  const publicListing = role === "buyer" && (pathname === "/buyer/properties" || pathname.startsWith("/buyer/properties/"));
+  const publicListing = role === "buyer" && isPublicBuyerListing(pathname);
 
   useEffect(() => {
     if (publicListing) return;

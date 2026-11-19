@@ -1,5 +1,9 @@
 export type AccountRole = "buyer" | "broker" | "admin";
 
+export function isPublicBuyerListing(pathname: string): boolean {
+  return pathname === "/buyer/properties" || pathname.startsWith("/buyer/properties/");
+}
+
 export function roleHome(role: unknown): string {
   return role === "buyer" || role === "broker" || role === "admin" ? `/${role}` : "/login?reason=account-unavailable";
 }

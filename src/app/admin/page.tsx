@@ -43,6 +43,7 @@ import { auth, db } from "@/lib/firebase";
 import { isRemoteImageUrl, uploadImageToCloudinary } from "@/lib/cloudinary";
 import SafeImage from "@/components/SafeImage";
 import TourLogMonitor from "@/components/TourLogMonitor";
+import WorkspaceFrame from "@/components/WorkspaceFrame";
 import styles from "./dashboard.module.css";
 
 type AdminSection = "dashboard" | "buyers" | "brokers" | "verification" | "properties" | "reports" | "tourLogs" | "profile";
@@ -508,10 +509,16 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#fbfaf8] text-slate-900">
+    <WorkspaceFrame label="Admin workspace" home="/admin" navigation={(close) => navigation.map(({ id, label, icon: Icon }) => (
+      <button key={id} type="button" aria-current={section === id ? "page" : undefined} className="workspace-link" onClick={() => { selectSection(id); close?.(); window.scrollTo(0, 0); }}>
+        <Icon size={18} aria-hidden="true" /> {label}
+        {id === "verification" && pendingBrokers.length > 0 && <span aria-label={pendingBrokers.length + " pending"} className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">{pendingBrokers.length}</span>}
+      </button>
+    ))}>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       <main>
-        <header className="sticky top-0 z-30 flex min-h-20 items-center border-b border-[#e9e8e3] bg-white/95 px-4 backdrop-blur sm:px-8">
-          <div className="min-w-0"><p className="text-xs font-bold uppercase tracking-widest text-[#087d7d]">LiBot Admin</p><h1 className="truncate text-lg font-semibold text-[#183c3e] sm:text-xl">{navigation.find((item) => item.id === section)?.label}</h1></div>
+        <header className="sticky top-0 z-30 flex min-h-16 items-center border-b border-slate-200 bg-white px-4 sm:px-8">
+          <div className="min-w-0"><h1 className="truncate text-lg font-semibold text-slate-900 sm:text-xl">{navigation.find((item) => item.id === section)?.label}</h1></div>
           <div className="relative ml-auto">
             <button aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)} className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
               <Bell size={19} />
@@ -524,14 +531,13 @@ export default function AdminPage() {
             <button type="button" aria-label="Account menu" aria-expanded={sidebarOpen} aria-controls="admin-account-menu" onClick={() => setSidebarOpen((open) => !open)} className="flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 text-slate-700 hover:bg-slate-100"><CircleUserRound size={18} /><Menu size={19} /></button>
             {sidebarOpen && <nav id="admin-account-menu" aria-label="Admin account" className="absolute right-0 top-[calc(100%+0.75rem)] z-50 max-h-[calc(100dvh-6rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl">
               <div className="border-b border-slate-100 px-3 py-3"><p className="truncate text-sm font-semibold">{admin ? displayName(admin) : "Administrator"}</p><p className="mt-0.5 truncate text-xs text-slate-500">{admin?.email}</p></div>
-              <div className="py-2">{navigation.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => selectSection(item.id)} aria-current={section === item.id ? "page" : undefined} className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium ${section === item.id ? "bg-[#e7f2ef] text-[#076267]" : "text-slate-700 hover:bg-slate-50"}`}><Icon size={18} />{item.label}{item.id === "verification" && pendingBrokers.length > 0 && <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">{pendingBrokers.length}</span>}</button>; })}</div>
               <div className="border-t border-slate-100 pt-2"><button type="button" onClick={handleSignOut} disabled={signingOut} className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"><LogOut size={18} />{signingOut ? "Signing out…" : "Sign out"}</button></div>
             </nav>}
           </div>
         </header>
 
         <div className="mx-auto max-w-[1440px] p-4 sm:p-8 lg:p-10">
-          {actionError && <div role="alert" className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700"><span>{actionError}</span><button onClick={() => setActionError("")}><X size={17} /></button></div>}
+          {actionError && <div role="alert" className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700"><span>{actionError}</span><button aria-label="Dismiss error" onClick={() => setActionError("")}><X size={17} /></button></div>}
           {section === "dashboard" && <Dashboard buyers={buyers} brokers={brokers} pending={pendingBrokers} properties={properties} onNavigate={selectSection} />}
           {(section === "buyers" || section === "brokers") && (
             <UserManagement
@@ -566,6 +572,7 @@ export default function AdminPage() {
       {selectedProperty && <PropertyModal property={selectedProperty} onClose={() => setSelectedProperty(null)} onRemove={() => removeProperty(selectedProperty)} working={actionId === selectedProperty.id} />}
       {reportDecision && <ReportDecisionModal decision={reportDecision} note={reportNote} onNote={setReportNote} error={actionError} working={actionId === reportDecision.report.id} onClose={() => { if (actionId !== reportDecision.report.id) { setReportDecision(null); setReportNote(""); setActionError(""); } }} onConfirm={() => void updateReportStatus(reportDecision.report, reportDecision.status, reportNote)} />}
     </div>
+    </WorkspaceFrame>
   );
 }
 
@@ -577,7 +584,7 @@ function NotificationPanel({ notifications, readIds, onOpen, onMarkAll, onRemove
     emerald: "bg-emerald-100 text-emerald-700",
   };
 
-  return <div className="fixed inset-x-4 top-20 z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-12 sm:w-[min(24rem,calc(100vw-2rem))]">
+  return <div className="notification-panel fixed inset-x-4 top-20 z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-12 sm:w-[min(24rem,calc(100vw-2rem))]">
     <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
       <div><h2 className="font-semibold text-slate-900">Notifications</h2><p className="text-xs text-slate-500">Recent platform activity</p></div>
       <button onClick={onMarkAll} disabled={!hasUnread} className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 disabled:text-slate-300"><CheckCheck size={15} />Mark all read</button>
@@ -607,9 +614,9 @@ function Dashboard({ buyers, brokers, pending, properties, onNavigate }: { buyer
   ];
   return (
     <div className={`${styles.dashboard} space-y-8`}>
-      <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#087d7d]">Platform workspace</p><h2 className="mt-2 text-3xl font-semibold tracking-tight text-[#183c3e] sm:text-4xl">Overview</h2><p className="mt-2 text-sm text-[#71817d]">Accounts, listings, and broker reviews in one place.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Platform workspace</p><h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Overview</h2><p className="mt-2 text-sm text-[#71817d]">Accounts, listings, and broker reviews in one place.</p></div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {cards.map(({ label, value, target }) => <button key={label} onClick={() => onNavigate(target)} className={styles.statCard}><p className="text-xs font-medium text-[#75817e]">{label}</p><p className="mt-2 text-3xl font-semibold text-[#183c3e]">{value}</p><span className="mt-3 inline-block text-xs font-semibold text-[#076267]">View details →</span></button>)}
+        {cards.map(({ label, value, target }) => <button key={label} onClick={() => onNavigate(target)} className={styles.statCard}><p className="text-xs font-medium text-[#75817e]">{label}</p><p className="mt-2 text-3xl font-semibold text-slate-900">{value}</p><span className="mt-3 inline-block text-xs font-semibold text-[#076267]">View details →</span></button>)}
       </div>
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h3 className="text-lg font-semibold">Pending broker applications</h3><button onClick={() => onNavigate("verification")} className="text-sm font-semibold text-blue-600">View queue</button></div><div className="mt-5 space-y-3">{pending.slice(0, 5).map((broker) => <div key={broker.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 p-4"><Avatar user={broker} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{displayName(broker)}</p><p className="truncate text-xs text-slate-500">{broker.agencyName || "Independent broker"}</p></div><StatusBadge status="pending" /></div>)}{pending.length === 0 && <EmptyState message="No broker applications are waiting for review." />}</div></div>

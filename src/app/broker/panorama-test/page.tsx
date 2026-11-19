@@ -633,18 +633,23 @@ export default function CreateVirtualTourPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-5 lg:px-8">
           <div className="flex items-center gap-4">
             <Link href="/broker" aria-label="Back to broker dashboard" className="rounded-xl border border-slate-200 p-2.5 text-slate-600 transition hover:bg-slate-50"><ArrowLeft size={19} /></Link>
-            <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">LiBot reconstruction studio</p><h1 className="mt-1 text-2xl font-semibold">Guided panorama capture</h1></div>
+            <div><h1 className="text-2xl font-semibold">Create a virtual tour</h1></div>
           </div>
-          <Link href="/broker/upload-images" className="hidden rounded-full bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 sm:block">Open property gallery upload</Link>
+          <div className="hidden sm:block"><Link href="/broker/upload-images" className="ui-button ui-button-secondary">Upload gallery photos</Link></div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl px-5 py-7 lg:px-8 lg:py-10">
-        <ol className="mb-8 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <section className="workspace-intro mb-6" aria-labelledby="capture-workflow">
+          <h2 id="capture-workflow" className="text-xl font-semibold">Build the tour one room at a time</h2>
+          <p className="mt-2 text-sm text-slate-600">Choose a property and room, capture the photos, and preview the panorama before publishing.</p>
+          <Link href="/broker/upload-images" className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-blue-700 sm:hidden">Upload gallery photos</Link>
+        </section>
+        <ol aria-label="Virtual tour progress" className="mb-8 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {stages.map((stage, index) => {
             const complete = index < currentIndex || published;
             const active = index === currentIndex && !published;
-            return <li key={stage.id} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-xs font-semibold ${active ? "border-blue-200 bg-blue-50 text-blue-700" : complete ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-400"}`}>{complete ? <CheckCircle2 size={17} /> : active ? <Circle size={17} fill="currentColor" /> : <Circle size={17} />}<span>{index + 1}. {stage.label}</span></li>;
+            return <li key={stage.id} aria-current={active ? "step" : undefined} className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold ${active ? "border-blue-200 bg-blue-50 text-blue-700" : complete ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-400"}`}>{complete ? <CheckCircle2 size={17} /> : active ? <Circle size={17} fill="currentColor" /> : <Circle size={17} />}<span>{stage.label}<span className="sr-only">{complete ? " (complete)" : ""}</span></span></li>;
           })}
         </ol>
 

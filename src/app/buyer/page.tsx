@@ -8,7 +8,7 @@ import {
   CalendarDays,
   ArrowUpRight,
   Search,
-  X,
+  Heart,
   ArrowLeft,
   ArrowRight,
 } from "lucide-react";
@@ -24,6 +24,7 @@ import styles from "./dashboard.module.css";
 import { isPublishedTour } from "@/lib/published-tour";
 import { loadTourSummaries } from "@/lib/tour-summaries";
 import { isBrowsableProperty } from "@/lib/property-visibility";
+import { PROPERTY_TYPES } from "@/lib/propertyAmenities";
 
 type RecentProperty = {
   id: string;
@@ -50,20 +51,10 @@ export default function BuyerDashboard() {
   const [featuredProperties, setFeaturedProperties] = useState<FeaturedProperty[]>([]);
   const [tourPropertyIds, setTourPropertyIds] = useState<Set<string>>(new Set());
   const [listingsLoading, setListingsLoading] = useState(true);
-  const [searchExpanded, setSearchExpanded] = useState(false);
-  const [headerCompact, setHeaderCompact] = useState(false);
   const [maxPrice, setMaxPrice] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [propertyType, setPropertyType] = useState("");
-  const searchRef = useRef<HTMLDivElement>(null);
   const { favoriteIds } = useBuyerFavorites();
-
-  useEffect(() => {
-    const updateHeader = () => setHeaderCompact(window.scrollY > 80);
-    updateHeader();
-    window.addEventListener("scroll", updateHeader, { passive: true });
-    return () => window.removeEventListener("scroll", updateHeader);
-  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser: User | null) => {
@@ -170,17 +161,6 @@ export default function BuyerDashboard() {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    if (!searchExpanded) return;
-    const close = (event: PointerEvent) => {
-      if (event.target instanceof Node && !searchRef.current?.contains(event.target)) setSearchExpanded(false);
-    };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setSearchExpanded(false); };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
-  }, [searchExpanded]);
-
   const openSearch = () => {
     const params = new URLSearchParams();
     if (searchTerm.trim()) params.set("location", searchTerm.trim());
@@ -212,61 +192,44 @@ export default function BuyerDashboard() {
   const iloiloHomes = featuredProperties.filter((property) => /iloilo/i.test(property.location ?? ""));
 
   return (
-    <div className="min-h-screen bg-[#fbfaf8] text-[#183c3e]">
-      <div className={styles.headerSpace}>
-      <header className={`${styles.header} ${headerCompact ? styles.headerCompact : ""}`}>
-        <div className={styles.headerRow}>
-          <Link href="/buyer" className="text-2xl font-bold tracking-tight text-[#076267]">LiBot</Link>
-          <nav aria-label="Discover homes" className={styles.discoveryNav}>
-            <Link href="/buyer/properties"><span aria-hidden="true">🌏</span>All homes</Link>
-            <Link href="/buyer/properties?tour=1"><span aria-hidden="true">🏡</span>Virtual tours</Link>
-            <Link href="/buyer/favorites"><span aria-hidden="true">♡</span>Favorites</Link>
-          </nav>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
+        <div className="mx-auto flex min-h-16 max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-8">
+          <p className="text-sm font-semibold">Overview</p>
           <div className="flex items-center gap-2"><NotificationCenter audience="buyer" /><BuyerAccountMenu onSignOut={handleSignOut} signingOut={signingOut} photo={profilePicture} /></div>
         </div>
-        <div ref={searchRef} className={`${styles.searchWrap} ${searchExpanded ? styles.searchExpanded : ""}`}>
-          <div className={styles.searchBar}>
-            <button type="button" onClick={() => setSearchExpanded(true)} aria-expanded={searchExpanded} aria-controls="buyer-search-panel" className={styles.searchField}><span className={styles.searchLabel}>Where</span><span className={styles.searchValue}>{searchTerm || (headerCompact ? "Anywhere" : "Search Iloilo homes")}</span></button>
-            <span className={styles.searchDivider} />
-            <button type="button" onClick={() => setSearchExpanded(true)} className={styles.searchField}><span className={styles.searchLabel}>Type</span><span className={styles.searchValue}>{propertyType || "Any property"}</span></button>
-            <span className={styles.searchDivider} />
-            <button type="button" onClick={() => setSearchExpanded(true)} className={styles.searchField}><span className={styles.searchLabel}>Budget</span><span className={styles.searchValue}>{maxPrice ? `Up to ₱${Number(maxPrice).toLocaleString("en-PH")}` : "Any price"}</span></button>
-            <button type="button" onClick={openSearch} aria-label="Search properties" className={styles.searchButton}><Search size={19} /><span className={styles.searchButtonText}>Search</span></button>
-          </div>
-          {searchExpanded && <div id="buyer-search-panel" className={styles.searchPanel}>
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#6d7a79]" htmlFor="dashboard-search">Location</label>
-            <input id="dashboard-search" autoFocus value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") openSearch(); }} placeholder="Try Jaro, Iloilo" className="mt-2 h-12 w-full rounded-xl border border-stone-200 px-4 text-sm outline-none focus:border-[#076267]" />
-            <label className="mt-4 block text-sm font-semibold">Maximum price<select value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-stone-200 bg-white px-3"><option value="">Any price</option><option value="3000000">₱3 million</option><option value="5000000">₱5 million</option><option value="10000000">₱10 million</option></select></label>
-            <div className="mt-4 flex flex-wrap gap-2">{["", "House", "Condo", "Apartment", "Lot"].map((type) => <button key={type} type="button" onClick={() => setPropertyType(type)} className={`rounded-full border px-4 py-2 text-sm ${propertyType === type ? "border-[#076267] bg-[#e7f2ef] text-[#076267]" : "border-stone-200 text-stone-600"}`}>{type || "Any type"}</button>)}</div>
-            <div className="mt-5 flex justify-between"><button type="button" onClick={() => setSearchExpanded(false)} className="flex items-center gap-1 text-sm text-stone-500"><X size={16} /> Close</button><button type="button" onClick={openSearch} className="rounded-xl bg-[#076267] px-5 py-2.5 text-sm font-semibold text-white">Show properties</button></div>
-          </div>}
-        </div>
       </header>
-      </div>
 
-      <main className="mx-auto max-w-[1440px] px-5 pb-16 pt-9 sm:px-8">
-        <div className={`${styles.intro} mb-9`}><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#087d7d]">Your home search</p><h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Find a place worth exploring, {buyerName}.</h1><p className="mt-2 text-sm text-[#637270]">Discover homes around Iloilo and step inside with a virtual tour.</p></div>
+      <main className="mx-auto max-w-[1440px] px-4 pb-16 pt-6 sm:px-8 sm:pt-9">
+        <section className="workspace-intro mb-9" aria-labelledby="buyer-overview-title">
+          <h1 id="buyer-overview-title" className="text-3xl font-semibold tracking-tight sm:text-4xl">Find your next home, {buyerName}.</h1>
+          <p className="mt-2 text-slate-600">Search Iloilo properties and step inside with a virtual tour.</p>
+          <form className="mt-5 grid max-w-4xl items-end gap-3 min-[520px]:grid-cols-2 lg:grid-cols-[1.25fr_1fr_1fr_auto]" onSubmit={(event) => { event.preventDefault(); openSearch(); }} aria-label="Find a property">
+            <label className="grid gap-1.5 text-sm font-medium">Location<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Try Jaro, Iloilo" className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base" /></label>
+            <label className="grid gap-1.5 text-sm font-medium">Property type<select value={propertyType} onChange={(event) => setPropertyType(event.target.value)} className="ui-select h-12 w-full rounded-xl border border-slate-200 bg-white pl-3 text-base"><option value="">Any type</option>{PROPERTY_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
+            <label className="grid gap-1.5 text-sm font-medium">Maximum price<select value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} className="ui-select h-12 w-full rounded-xl border border-slate-200 bg-white pl-3 text-base"><option value="">Any price</option><option value="3000000">Up to ₱3M</option><option value="5000000">Up to ₱5M</option><option value="10000000">Up to ₱10M</option></select></label>
+            <button type="submit" className="ui-button ui-button-primary h-12"><Search size={18} aria-hidden="true" /> Search</button>
+          </form>
+        </section>
         <PropertyRail title="Homes you can tour" description="Take a closer look before you visit." properties={tourHomes} loading={listingsLoading} tourPropertyIds={tourPropertyIds} empty="Virtual tours are coming soon." />
-        <div className={`${styles.quickLinks} my-10 grid gap-3 md:grid-cols-3`}>
+        <div className="my-10 grid gap-3 md:grid-cols-3">
           <Link href="/buyer/properties" className={styles.quickLink}><Search size={26} /><span><strong>Explore all homes</strong><small>Browse available properties</small></span><ArrowUpRight size={18} /></Link>
-          <Link href="/buyer/favorites" className={styles.quickLink}><HeartIcon /><span><strong>Your favorites</strong><small>{favoriteIds.length} saved {favoriteIds.length === 1 ? "home" : "homes"}</small></span><ArrowUpRight size={18} /></Link>
+          <Link href="/buyer/favorites" className={styles.quickLink}><Heart size={25} aria-hidden="true" /><span><strong>Your favorites</strong><small>{favoriteIds.length} saved {favoriteIds.length === 1 ? "home" : "homes"}</small></span><ArrowUpRight size={18} /></Link>
           <Link href="/buyer/calendar" className={styles.quickLink}><CalendarDays size={26} /><span><strong>Upcoming viewings</strong><small>{upcomingViewings.length} scheduled</small></span><ArrowUpRight size={18} /></Link>
         </div>
         <PropertyRail title="Explore Iloilo" description="Local homes, ready for your next chapter." properties={iloiloHomes.length ? iloiloHomes : featuredProperties} loading={listingsLoading} tourPropertyIds={tourPropertyIds} empty="No homes available right now." />
         {(recentLoading || recentProperties.length > 0) && <PropertyRail title="Recently viewed" description="Pick up where you left off." properties={recentProperties} loading={recentLoading} tourPropertyIds={tourPropertyIds} empty="" />}
-        {upcomingViewings.length > 0 && <section className="mt-12"><div className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-semibold">Upcoming viewings</h2><Link href="/buyer/calendar" className="text-sm font-semibold text-[#076267]">View calendar →</Link></div><div className="grid gap-3 md:grid-cols-3">{upcomingViewings.map((item) => <Link key={item.id} href="/buyer/calendar" className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"><p className="font-semibold">{item.propertyTitle || "Property viewing"}</p><p className="mt-2 text-sm text-stone-500">{item.scheduledAt!.toDate().toLocaleDateString("en-PH", { month: "short", day: "numeric" })} · {item.scheduledAt!.toDate().toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}</p></Link>)}</div></section>}
+        {upcomingViewings.length > 0 && <section className="mt-12"><div className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-semibold">Upcoming viewings</h2><Link href="/buyer/calendar" className="text-sm font-semibold text-blue-700">View calendar →</Link></div><div className="grid gap-3 md:grid-cols-3">{upcomingViewings.map((item) => <Link key={item.id} href="/buyer/calendar" className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"><p className="font-semibold">{item.propertyTitle || "Property viewing"}</p><p className="mt-2 text-sm text-stone-500">{item.scheduledAt!.toDate().toLocaleDateString("en-PH", { month: "short", day: "numeric" })} · {item.scheduledAt!.toDate().toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}</p></Link>)}</div></section>}
       </main>
     </div>
   );
 }
 
-function HeartIcon() { return <span aria-hidden="true" className="text-2xl leading-none">♡</span>; }
-
 function PropertyRail({ title, description, properties, loading, tourPropertyIds, empty }: { title: string; description: string; properties: FeaturedProperty[]; loading: boolean; tourPropertyIds: Set<string>; empty: string }) {
   const railRef = useRef<HTMLDivElement>(null);
   const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * 640, behavior: "smooth" });
   return <section className={styles.railSection}>
-    <div className="mb-4 flex items-end justify-between gap-4"><div><h2 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2><p className="mt-1 text-sm text-[#75817e]">{description}</p></div><div className="hidden gap-2 sm:flex"><button type="button" onClick={() => scroll(-1)} aria-label={`Scroll ${title} left`} className={styles.railArrow}><ArrowLeft size={17} /></button><button type="button" onClick={() => scroll(1)} aria-label={`Scroll ${title} right`} className={styles.railArrow}><ArrowRight size={17} /></button></div></div>
-    {loading ? <div className={styles.rail}>{[1, 2, 3, 4, 5].map((item) => <div key={item} className={`${styles.propertyCard} h-64 animate-pulse rounded-2xl bg-stone-200`} />)}</div> : properties.length ? <div ref={railRef} className={styles.rail}>{properties.map((property) => <Link key={property.id} href={`/buyer/properties/${property.id}`} className={styles.propertyCard}><div className={styles.propertyImage}>{property.image ? <SafeImage src={property.image} alt={property.title || "Property"} fill sizes="(max-width: 640px) 70vw, 260px" className="object-cover" /> : <div className="flex h-full items-center justify-center bg-[#e8efed] text-[#92aba7]"><Home size={40} /></div>}{tourPropertyIds.has(property.id) && <span className={styles.tourBadge}>360° Tour</span>}</div><p className="mt-2 truncate text-sm font-semibold">{property.title || "Home in Iloilo"}</p><p className="mt-0.5 truncate text-xs text-[#75817e]">{property.location || "Iloilo, Philippines"}</p><p className="mt-1 text-xs"><strong>₱{property.price ? Number(property.price).toLocaleString("en-PH") : "Contact broker"}</strong>{property.beds ? ` · ${property.beds} beds` : ""}</p></Link>)}</div> : <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-6 py-10 text-sm text-stone-500">{empty}</div>}
+    <div className="mb-4 flex items-end justify-between gap-4"><div><h2 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2><p className="mt-1 text-sm text-slate-500">{description}</p></div><div className="hidden gap-2 sm:flex"><button type="button" onClick={() => scroll(-1)} aria-label={`Scroll ${title} left`} className={styles.railArrow}><ArrowLeft size={17} /></button><button type="button" onClick={() => scroll(1)} aria-label={`Scroll ${title} right`} className={styles.railArrow}><ArrowRight size={17} /></button></div></div>
+    {loading ? <div className={styles.rail}>{[1, 2, 3, 4, 5].map((item) => <div key={item} className={`${styles.propertyCard} h-64 animate-pulse rounded-2xl bg-stone-200`} />)}</div> : properties.length ? <div ref={railRef} className={styles.rail}>{properties.map((property) => <Link key={property.id} href={`/buyer/properties/${property.id}`} className={styles.propertyCard}><div className={styles.propertyImage}>{property.image ? <SafeImage src={property.image} alt={property.title || "Property"} fill sizes="(max-width: 640px) 70vw, 260px" className="object-cover" /> : <div className="flex h-full items-center justify-center bg-[#e8efed] text-[#92aba7]"><Home size={40} /></div>}{tourPropertyIds.has(property.id) && <span className={styles.tourBadge}>360° Tour</span>}</div><p className="mt-2 truncate text-sm font-semibold">{property.title || "Home in Iloilo"}</p><p className="mt-0.5 truncate text-xs text-slate-500">{property.location || "Iloilo, Philippines"}</p><p className="mt-1 text-xs"><strong>₱{property.price ? Number(property.price).toLocaleString("en-PH") : "Contact broker"}</strong>{property.beds ? ` · ${property.beds} beds` : ""}</p></Link>)}</div> : <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-6 py-10 text-sm text-stone-500">{empty}</div>}
   </section>;
 }

@@ -229,7 +229,7 @@ export default function NotificationCenter({ audience }: { audience: Audience })
       {unreadCount > 0 && <span className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">{unreadCount > 9 ? "9+" : unreadCount}</span>}
     </button>
 
-    {open && <div className="fixed inset-x-4 top-20 z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-12 sm:w-[min(24rem,calc(100vw-2rem))]">
+    {open && <div className="notification-panel fixed inset-x-4 top-20 z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-12 sm:w-[min(24rem,calc(100vw-2rem))]">
       <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
         <div><h2 className="font-semibold text-slate-900">Notifications</h2><p className="text-xs text-slate-500">Your latest LiBot activity</p></div>
         <button onClick={markAllRead} disabled={unreadCount === 0} className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 disabled:text-slate-300"><CheckCheck size={15} />Mark all read</button>

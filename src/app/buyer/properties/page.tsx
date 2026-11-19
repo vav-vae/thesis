@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -9,6 +9,7 @@ import {
   getDoc,
   getDocs,
   query,
+  Timestamp,
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -22,7 +23,6 @@ import {
   Heart,
   X,
   Home,
-  ChevronRight,
   Zap,
   Filter,
   ArrowUpDown,
@@ -32,7 +32,9 @@ import NotificationCenter from "@/components/NotificationCenter";
 import BuyerAccountMenu from "@/components/BuyerAccountMenu";
 import SafeImage from "@/components/SafeImage";
 import AppLogo from "@/components/AppLogo";
-import searchStyles from "./search.module.css";
+import { ThemeToggle } from "@/components/ThemeController";
+import { PROPERTY_TYPES } from "@/lib/propertyAmenities";
+import { canAccessRole } from "@/lib/role-access";
 import { matchesLocation, matchesPropertySearch } from "@/lib/property-search";
 import { isPublishedTour } from "@/lib/published-tour";
 import { loadTourSummaries } from "@/lib/tour-summaries";
@@ -53,6 +55,7 @@ interface Property {
   amenities?: string[];
   availabilityStatus?: "available" | "reserved" | "sold";
   status?: string;
+  createdAt?: Timestamp;
   [key: string]: unknown;
 }
 
@@ -63,44 +66,59 @@ export default function BuyerPropertiesPage() {
 function BuyerPropertiesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialParam = (key: string) => searchParams.get(key) ?? "";
+  const searchTerm = searchParams.get("q") ?? "";
+  const locationFilter = searchParams.get("location") ?? "";
+  const typeFilter = searchParams.get("type") ?? "";
+  const minPrice = searchParams.get("minPrice") ?? "";
+  const maxPrice = searchParams.get("maxPrice") ?? "";
+  const minBeds = searchParams.get("beds") ?? "";
+  const virtualToursOnly = searchParams.get("tour") === "1";
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState(() => initialParam("q"));
+  const [loadError, setLoadError] = useState(false);
+  const [tourError, setTourError] = useState(false);
+  const [loadVersion, setLoadVersion] = useState(0);
+  const [buyerAccount, setBuyerAccount] = useState(false);
   const { favorites, toggleFavorite, isUpdating, error: favoriteError } = useBuyerFavorites();
   const [sortBy, setSortBy] = useState<"newest" | "price-low" | "price-high">("newest");
-  const [showFilters, setShowFilters] = useState(() => Boolean(initialParam("location") || initialParam("type") || initialParam("minPrice") || initialParam("maxPrice")));
-  const [locationFilter, setLocationFilter] = useState(() => initialParam("location"));
-  const [typeFilter, setTypeFilter] = useState(() => initialParam("type"));
-  const [minPrice, setMinPrice] = useState(() => initialParam("minPrice"));
-  const [maxPrice, setMaxPrice] = useState(() => initialParam("maxPrice"));
-  const [minBeds, setMinBeds] = useState(() => initialParam("beds"));
+  const [showFilters, setShowFilters] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [tourPropertyIds, setTourPropertyIds] = useState<Set<string>>(new Set());
-  const [virtualToursOnly, setVirtualToursOnly] = useState(() => initialParam("tour") === "1");
   const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [compareOpen, setCompareOpen] = useState(false);
   const [compareError, setCompareError] = useState("");
+  const comparison = useRef<HTMLDialogElement>(null);
+  const searchEdited = useRef(false);
 
-  useEffect(() => {
+  function updateFilters(values: Record<string, string>) {
+    searchEdited.current = true;
     const params = new URLSearchParams(window.location.search);
-    for (const [key, value] of Object.entries({ q: searchTerm, location: locationFilter, type: typeFilter, minPrice, maxPrice, beds: minBeds })) {
+    for (const [key, value] of Object.entries(values)) {
       if (value) params.set(key, value);
       else params.delete(key);
     }
-    if (virtualToursOnly) params.set("tour", "1");
-    else params.delete("tour");
-    const next = `${window.location.pathname}${params.size ? `?${params}` : ""}`;
-    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", next);
-  }, [searchTerm, locationFilter, typeFilter, minPrice, maxPrice, minBeds, virtualToursOnly]);
+    window.history.replaceState(null, "", window.location.pathname + (params.size ? "?" + params : ""));
+  }
+
+  const clearFilters = (clearSearch = false) => updateFilters({ location: "", type: "", minPrice: "", maxPrice: "", beds: "", tour: "", ...(clearSearch ? { q: "" } : {}) });
+
+  const retry = () => {
+    setLoading(true);
+    setLoadError(false);
+    setTourError(false);
+    setLoadVersion((version) => version + 1);
+  };
 
   useEffect(() => {
+    let disposed = false;
+    let request = 0;
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      const current = ++request;
+      if (!user) setBuyerAccount(false);
       try {
         const [propertySnapshot, profileSnapshot, tourSnapshot] = await Promise.all([
           getDocs(collection(db, "properties")),
-          user ? getDoc(doc(db, "users", user.uid)) : Promise.resolve(null),
-          loadTourSummaries(String(db.app.options.projectId)),
+          user ? getDoc(doc(db, "users", user.uid)).catch(() => null) : Promise.resolve(null),
+          loadTourSummaries(String(db.app.options.projectId)).catch(() => null),
         ]);
 
         const propertyList: Property[] = [];
@@ -133,30 +151,44 @@ function BuyerPropertiesContent() {
           });
         });
 
+        if (disposed || request !== current) return;
         setProperties(propertyList.map((property) => ({
           ...property,
           image: isRemoteImageUrl(property.image) ? property.image : imageLookup.get(property.id),
         })));
-        setTourPropertyIds(new Set(tourSnapshot.filter(isPublishedTour).map((item) => String(item.propertyId))));
-        const discovery = profileSnapshot?.data()?.settings?.discovery;
-        if (discovery && !window.location.search) {
-          setLocationFilter(String(discovery.location ?? ""));
-          setMinPrice(String(discovery.minPrice ?? ""));
-          setMaxPrice(String(discovery.maxPrice ?? ""));
-          setMinBeds(String(discovery.minBeds ?? ""));
-          setShowFilters(Boolean(discovery.location || discovery.minPrice || discovery.maxPrice || discovery.minBeds));
+        setLoadError(false);
+        setTourError(tourSnapshot === null);
+        setTourPropertyIds(new Set((tourSnapshot ?? []).filter(isPublishedTour).map((item) => String(item.propertyId))));
+        const account = profileSnapshot?.data();
+        setBuyerAccount(canAccessRole("buyer", account ?? {}));
+        const discovery = account?.settings?.discovery;
+        if (discovery && !searchEdited.current && !window.location.search) {
+          updateFilters({
+            location: String(discovery.location ?? ""),
+            minPrice: String(discovery.minPrice ?? ""),
+            maxPrice: String(discovery.maxPrice ?? ""),
+            beds: String(discovery.minBeds ?? ""),
+          });
         }
       } catch (error) {
-        console.log(error);
+        console.error("Unable to load properties:", error);
+        if (!disposed && request === current) setLoadError(true);
       } finally {
-        setLoading(false);
+        if (!disposed && request === current) setLoading(false);
       }
     });
-    return () => unsubscribe();
-  }, []);
+    return () => { disposed = true; unsubscribe(); };
+  }, [loadVersion]);
 
   const propertyPrice = (property: Property) => Number(String(property.price ?? "").replace(/[^0-9.]/g, "")) || 0;
-  const activeFilterCount = [locationFilter, typeFilter, minPrice, maxPrice, minBeds].filter(Boolean).length + (virtualToursOnly ? 1 : 0);
+  const filters = [
+    { key: "location", label: locationFilter },
+    { key: "type", label: typeFilter },
+    { key: "minPrice", label: minPrice && "From \u20b1" + Number(minPrice).toLocaleString("en-PH") },
+    { key: "maxPrice", label: maxPrice && "Up to \u20b1" + Number(maxPrice).toLocaleString("en-PH") },
+    { key: "beds", label: minBeds && minBeds + "+ beds" },
+    { key: "tour", label: virtualToursOnly && "Has virtual tour" },
+  ].filter(({ label }) => Boolean(label));
   const filteredProperties = properties
     .filter((property) => {
       const priceValue = propertyPrice(property);
@@ -169,12 +201,11 @@ function BuyerPropertiesContent() {
         && (!virtualToursOnly || tourPropertyIds.has(property.id));
     })
     .sort((a, b) => {
-      if (sortBy === "price-low") {
-        return propertyPrice(a) - propertyPrice(b);
-      } else if (sortBy === "price-high") {
-        return propertyPrice(b) - propertyPrice(a);
-      }
-      return 0;
+      if (sortBy === "newest") return (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0);
+      const firstPrice = propertyPrice(a);
+      const secondPrice = propertyPrice(b);
+      if (!firstPrice || !secondPrice) return Number(!firstPrice) - Number(!secondPrice);
+      return sortBy === "price-low" ? firstPrice - secondPrice : secondPrice - firstPrice;
     });
   const comparedProperties = compareIds.map((id) => properties.find((property) => property.id === id)).filter((property): property is Property => Boolean(property));
 
@@ -206,72 +237,52 @@ function BuyerPropertiesContent() {
     <div className="min-h-screen bg-slate-50">
       <main>
         <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-            <div className="flex min-w-0 items-center gap-3"><Link href="/buyer" aria-label="LiBot dashboard" className="shrink-0"><AppLogo className="h-9 w-9" /></Link><h1 className="truncate text-lg font-semibold text-slate-900 sm:text-xl">Browse Properties</h1></div>
-            <div className="flex items-center gap-2"><NotificationCenter audience="buyer" /><BuyerAccountMenu onSignOut={handleSignOut} signingOut={signingOut} /></div>
+          <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+            <Link href={buyerAccount ? "/buyer" : "/"} className="flex shrink-0 items-center gap-2 text-lg font-bold"><AppLogo alt="" className="h-9 w-9" />LiBot</Link>
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              {buyerAccount ? <><NotificationCenter audience="buyer" /><BuyerAccountMenu onSignOut={handleSignOut} signingOut={signingOut} /></> : <Link href="/login" className="ui-button ui-button-secondary">Sign in</Link>}
+            </div>
           </div>
         </header>
 
-        {/* Page Content */}
-        <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-10">
+        <div className={"mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:pt-10 " + (compareIds.length ? "pb-28" : "pb-10")}>
           {favoriteError && <div role="alert" className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{favoriteError}</div>}
-          {compareError && <div role="alert" className="mb-6 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><span>{compareError}</span><button onClick={() => setCompareError("")} aria-label="Dismiss"><X size={17} /></button></div>}
-          {/* Search Bar */}
-          <div className="mb-8">
-            <div className="relative">
-              <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by property name or location..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-12 pr-4 h-12 bg-white border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-300 focus:ring-1 focus:ring-slate-200 transition-all"
-              />
-            </div>
-          </div>
-
-          <label className="mb-5 inline-flex cursor-pointer items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm"><input type="checkbox" checked={virtualToursOnly} onChange={(event) => setVirtualToursOnly(event.target.checked)} className="h-4 w-4 accent-blue-600" />Has virtual tour</label>
-
-          {/* Filters and Sort Bar */}
-          <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setShowFilters(!showFilters)}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors text-slate-600 hover:text-slate-900 font-medium"
-              >
-                <Filter size={18} />
-                <span>Filter</span>
-                {activeFilterCount > 0 && <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs text-white">{activeFilterCount}</span>}
-              </button>
-              
-              <div className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg">
-                <ArrowUpDown size={18} className="text-slate-400" />
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "newest" | "price-low" | "price-high")}
-                  className="bg-transparent text-slate-900 font-medium focus:outline-none cursor-pointer"
-                >
-                  <option value="newest">Newest First</option>
-                  <option value="price-low">Price: Low to High</option>
-                  <option value="price-high">Price: High to Low</option>
-                </select>
+          {compareError && <div role="alert" className="mb-6 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><span>{compareError}</span><button type="button" onClick={() => setCompareError("")} aria-label="Dismiss comparison message" className="ui-icon-button"><X size={17} /></button></div>}
+          <section className="workspace-intro mb-6" aria-labelledby="property-search-title">
+            <h1 id="property-search-title" className="text-3xl font-semibold sm:text-4xl">Browse properties</h1>
+            <p className="mt-2 text-slate-600">Find a place in Iloilo and compare your shortlist.</p>
+            <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <label className="relative block">
+                <span className="sr-only">Search by property name or location</span>
+                <Search size={20} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" aria-hidden="true" />
+                <input type="search" placeholder="Property name or location" value={searchTerm} onChange={(event) => updateFilters({ q: event.target.value })} className="h-12 w-full rounded-xl border border-slate-200 bg-white pl-12 pr-4 text-base" />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => setShowFilters((open) => !open)} aria-expanded={showFilters} aria-controls="property-filters" className="ui-button ui-button-secondary"><Filter size={17} aria-hidden="true" /> Filters {filters.length > 0 && <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs text-white">{filters.length}</span>}</button>
+                <label className="ui-button ui-button-secondary cursor-pointer"><input type="checkbox" checked={virtualToursOnly} onChange={(event) => updateFilters({ tour: event.target.checked ? "1" : "" })} className="h-4 w-4 accent-blue-600" /> Has virtual tour</label>
               </div>
             </div>
+          </section>
 
-            <div className="text-sm text-slate-600">
-              Showing <span className="font-semibold text-slate-900">{filteredProperties.length}</span> of <span className="font-semibold text-slate-900">{properties.length}</span> properties
+          <section id="property-filters" aria-label="Property filters" hidden={!showFilters} className="ui-card mb-6 p-4 sm:p-6">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <label className="grid gap-2 text-sm font-medium">Location<input value={locationFilter} onChange={(event) => updateFilters({ location: event.target.value })} placeholder="City or province" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base" /></label>
+              <label className="grid gap-2 text-sm font-medium">Property type<select value={typeFilter} onChange={(event) => updateFilters({ type: event.target.value })} className="ui-select h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-3 text-base"><option value="">Any type</option>{typeFilter && !PROPERTY_TYPES.some((type) => type === typeFilter) && <option>{typeFilter}</option>}{PROPERTY_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
+              <label className="grid gap-2 text-sm font-medium">Minimum price<input type="number" min="0" value={minPrice} onChange={(event) => updateFilters({ minPrice: event.target.value })} placeholder="Any" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base" /></label>
+              <label className="grid gap-2 text-sm font-medium">Maximum price<input type="number" min="0" value={maxPrice} onChange={(event) => updateFilters({ maxPrice: event.target.value })} placeholder="Any" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base" /></label>
+              <label className="grid gap-2 text-sm font-medium">Minimum bedrooms<select value={minBeds} onChange={(event) => updateFilters({ beds: event.target.value })} className="ui-select h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-3 text-base"><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></label>
             </div>
+          </section>
+          {filters.length > 0 && <div className="mb-5 flex flex-wrap items-center gap-2" aria-label="Active filters">
+            {filters.map(({ key, label }) => <button key={key} type="button" aria-label={"Remove filter " + label} onClick={() => updateFilters({ [key]: "" })} className="ui-button ui-button-secondary max-w-full text-left [overflow-wrap:anywhere]">{label}<X size={15} className="shrink-0" aria-hidden="true" /></button>)}
+            <button type="button" onClick={() => clearFilters()} className="ui-button text-blue-700 hover:underline">Clear filters</button>
+          </div>}
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-600" role="status">{loading ? "Loading properties..." : !loadError && (!virtualToursOnly || !tourError) ? filteredProperties.length + (filteredProperties.length === 1 ? " property" : " properties") : ""}</p>
+            <label className="flex items-center gap-2 text-sm font-semibold"><ArrowUpDown size={17} aria-hidden="true" /><span className="sr-only">Sort properties</span><select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} className="ui-select min-h-11 rounded-xl border border-slate-200 bg-white pl-3"><option value="newest">Newest first</option><option value="price-low">Price, low to high</option><option value="price-high">Price, high to low</option></select></label>
           </div>
-
-          {activeFilterCount > 0 && <div className="mb-5 flex flex-wrap items-center gap-2" aria-label="Active filters">{[
-            locationFilter && `Location: ${locationFilter}`,
-            typeFilter && `Type: ${typeFilter}`,
-            minPrice && `From ₱${Number(minPrice).toLocaleString("en-PH")}`,
-            maxPrice && `Up to ₱${Number(maxPrice).toLocaleString("en-PH")}`,
-            minBeds && `${minBeds}+ beds`,
-            virtualToursOnly && "Has virtual tour",
-          ].filter(Boolean).map((label) => <span key={label as string} className="rounded-full bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-800">{label}</span>)}<button onClick={() => { setLocationFilter(""); setTypeFilter(""); setMinPrice(""); setMaxPrice(""); setMinBeds(""); setVirtualToursOnly(false); }} className="px-2 text-xs font-semibold text-slate-500 hover:text-slate-900">Clear all</button></div>}
-          {showFilters && <><div className="fixed inset-0 z-40 bg-slate-950/50 md:hidden" onClick={() => setShowFilters(false)} aria-hidden="true" /><section aria-label="Filter properties" className={`${searchStyles.sheet} fixed inset-x-0 bottom-0 z-50 max-h-[85dvh] overflow-y-auto rounded-t-3xl border border-slate-200 bg-white p-5 shadow-xl md:static md:z-auto md:mb-8 md:max-h-none md:rounded-2xl md:shadow-sm`}><div className="flex items-center justify-between gap-4"><h2 className="text-lg font-semibold text-slate-900">Filter properties</h2><button onClick={() => setShowFilters(false)} aria-label="Close filters" className="rounded-lg p-2 text-slate-500 md:hidden"><X size={20} /></button></div><div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><label className="text-xs font-semibold text-slate-600">Location<input value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)} placeholder="City or province" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900" /></label><label className="text-xs font-semibold text-slate-600">Property type<select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900"><option value="">Any type</option><option value="Condominium">Condominium</option><option value="House and Lot">House and Lot</option><option value="Lot">Lot</option></select></label><label className="text-xs font-semibold text-slate-600">Minimum price<input type="number" min="0" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} placeholder="Any" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900" /></label><label className="text-xs font-semibold text-slate-600">Maximum price<input type="number" min="0" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="Any" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900" /></label><label className="text-xs font-semibold text-slate-600">Minimum bedrooms<select value={minBeds} onChange={(event) => setMinBeds(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900"><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></label></div><label className="mt-5 flex cursor-pointer items-center gap-3 text-sm font-semibold text-slate-700"><input type="checkbox" checked={virtualToursOnly} onChange={(event) => setVirtualToursOnly(event.target.checked)} className="h-4 w-4 accent-teal-700" />Has virtual tour</label><button onClick={() => setShowFilters(false)} className="mt-6 min-h-12 w-full rounded-xl bg-[#07585b] px-5 text-sm font-semibold text-white md:hidden">Show {filteredProperties.length} {filteredProperties.length === 1 ? "property" : "properties"}</button></section></>}
+          {tourError && !virtualToursOnly && !loadError && <p role="status" className="mb-4 text-sm text-slate-600">Virtual tour availability could not be loaded. <button type="button" onClick={retry} className="font-semibold text-blue-700 underline">Retry</button></p>}
 
           {/* Loading State */}
           {loading ? (
@@ -294,137 +305,176 @@ function BuyerPropertiesContent() {
                 </div>
               ))}
             </div>
+          ) : loadError || (tourError && virtualToursOnly) ? (
+            <div className="ui-card p-8 text-center" role="alert">
+              <h2 className="text-lg font-semibold">{loadError ? "Properties could not be loaded" : "Virtual tour availability could not be loaded"}</h2>
+              <p className="mt-2 text-slate-600">Try again to refresh the results.</p>
+              <button type="button" onClick={retry} className="ui-button ui-button-primary mt-5">Try again</button>
+            </div>
           ) : (
             <>
               {/* Properties Grid */}
               {filteredProperties.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {filteredProperties.map((property) => (
-                    <Link
-                      key={property.id}
-                      href={`/buyer/properties/${property.id}`}
-                      className="group"
-                    >
-                      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden hover:shadow-lg hover:border-slate-300 transition-shadow duration-150 h-full flex flex-col">
-                        {/* Image Container */}
-                        <div className="relative h-48 bg-gradient-to-br from-slate-200 to-slate-300 overflow-hidden">
-                          {property.image ? (
-                            <SafeImage
-                              src={property.image as string}
-                              alt={property.title || "Property cover"}
-                              fill
-                              sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
-                              className="object-cover transition-transform duration-150 group-hover:scale-[1.03] motion-reduce:transform-none"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-slate-100">
-                              <Home size={48} className="text-slate-300" />
-                            </div>
-                          )}
+                    <article key={property.id} className="ui-card group relative flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
+                      {/* Image Container */}
+                      <div className="relative h-48 bg-gradient-to-br from-slate-200 to-slate-300 overflow-hidden">
+                        {property.image ? (
+                          <SafeImage
+                            src={property.image as string}
+                            alt={property.title || "Property cover"}
+                            fill
+                            sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
+                            className="object-cover transition-transform duration-150 group-hover:scale-[1.03] motion-reduce:transform-none"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-slate-100">
+                            <Home size={48} className="text-slate-300" />
+                          </div>
+                        )}
 
-                          {/* Favorite Button */}
-                          <button
-                            aria-label={favorites.has(property.id) ? "Remove from favorites" : "Add to favorites"}
-                            disabled={isUpdating(property.id)}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              void toggleFavorite(property.id);
-                            }}
-                            className="absolute top-3 right-3 p-2 bg-white rounded-full shadow-md hover:shadow-lg transition-all hover:scale-110 disabled:opacity-60"
-                          >
-                            <Heart
-                              size={20}
-                              className={`transition-colors ${
-                                favorites.has(property.id)
-                                  ? "fill-red-500 text-red-500"
-                                  : "text-slate-400"
-                              }`}
-                            />
-                          </button>
+                        {/* Favorite Button */}
+                        <button
+                          aria-label={favorites.has(property.id) ? "Remove from favorites" : "Add to favorites"}
+                          type="button"
+                          aria-pressed={favorites.has(property.id)}
+                          disabled={isUpdating(property.id)}
+                          onClick={() => void toggleFavorite(property.id)}
+                          className="ui-icon-button absolute right-3 top-3 z-10 shadow-sm"
+                        >
+                          <Heart
+                            size={20}
+                            className={`transition-colors ${
+                              favorites.has(property.id)
+                                ? "fill-red-500 text-red-500"
+                                : "text-slate-400"
+                            }`}
+                          />
+                        </button>
 
-                          <button aria-label={compareIds.includes(property.id) ? "Remove from comparison" : "Add to comparison"} onClick={(event) => { event.preventDefault(); toggleCompare(property.id); }} className={`absolute right-3 top-14 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition ${compareIds.includes(property.id) ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:text-blue-600"}`}><Scale size={17} /></button>
+                        <button aria-label={compareIds.includes(property.id) ? "Remove from comparison" : "Add to comparison"} type="button" aria-pressed={compareIds.includes(property.id)} onClick={() => toggleCompare(property.id)} className={`absolute right-3 top-16 z-10 flex h-11 w-11 items-center justify-center rounded-xl shadow-sm transition ${compareIds.includes(property.id) ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:text-blue-600"}`}><Scale size={17} /></button>
 
-                          {/* Badge */}
-                          {tourPropertyIds.has(property.id) && <div className="absolute top-3 left-3 flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md"><Zap size={14} />360° Tour Available</div>}
-                          <div className={`absolute bottom-3 left-3 rounded-full px-3 py-1 text-xs font-semibold capitalize shadow-sm ${property.availabilityStatus === "sold" ? "bg-slate-900 text-white" : property.availabilityStatus === "reserved" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{property.availabilityStatus ?? "available"}</div>
+                        {/* Badge */}
+                        {tourPropertyIds.has(property.id) && <div className="absolute top-3 left-3 flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md"><Zap size={14} />360° Tour Available</div>}
+                        <div className={`absolute bottom-3 left-3 rounded-full px-3 py-1 text-xs font-semibold capitalize shadow-sm ${property.availabilityStatus === "sold" ? "bg-slate-900 text-white" : property.availabilityStatus === "reserved" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{property.availabilityStatus ?? "available"}</div>
+                      </div>
+
+                      {/* Content */}
+                      <div className="p-6 flex flex-col flex-1">
+                        <h3 className="font-semibold text-slate-900 text-lg mb-2 group-hover:text-blue-600 transition-colors line-clamp-2">
+                          {property.title || "Unnamed Property"}
+                        </h3>
+
+                        {/* Location */}
+                        <div className="flex items-start gap-2 mb-4">
+                          <MapPin size={16} className="text-slate-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-sm text-slate-600 line-clamp-2">
+                            {property.location || "Location not specified"}
+                          </p>
                         </div>
 
-                        {/* Content */}
-                        <div className="p-6 flex flex-col flex-1">
-                          <h3 className="font-semibold text-slate-900 text-lg mb-2 group-hover:text-blue-600 transition-colors line-clamp-2">
-                            {property.title || "Unnamed Property"}
-                          </h3>
+                        {/* Details Grid */}
+                        {(
+                          <div className="grid grid-cols-3 gap-3 mb-6 py-4 border-y border-slate-200">
+                            {property.beds != null && (
+                              <div className="text-center">
+                                <p className="text-2xl font-light text-slate-900">{property.beds}</p>
+                                <p className="text-xs text-slate-600">Beds</p>
+                              </div>
+                            )}
+                            {property.baths != null && (
+                              <div className="text-center">
+                                <p className="text-2xl font-light text-slate-900">{property.baths}</p>
+                                <p className="text-xs text-slate-600">Baths</p>
+                              </div>
+                            )}
+                            {property.sqft != null && (
+                              <div className="text-center">
+                                <p className="text-2xl font-light text-slate-900">{property.sqft}</p>
+                                <p className="text-xs text-slate-600">Sqft</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
-                          {/* Location */}
-                          <div className="flex items-start gap-2 mb-4">
-                            <MapPin size={16} className="text-slate-400 flex-shrink-0 mt-0.5" />
-                            <p className="text-sm text-slate-600 line-clamp-2">
-                              {property.location || "Location not specified"}
+                        {/* Price & CTA */}
+                        <div className="mt-auto flex flex-wrap items-end justify-between gap-2">
+                          <div>
+                            <p className="text-xs text-slate-600 mb-1">Starting Price</p>
+                            <p className="text-xl font-semibold text-slate-900">
+                              {property.price ? "\u20b1" + property.price : "Contact for price"}
                             </p>
                           </div>
-
-                          {/* Details Grid */}
-                          {(
-                            <div className="grid grid-cols-3 gap-3 mb-6 py-4 border-y border-slate-200">
-                              {property.beds != null && (
-                                <div className="text-center">
-                                  <p className="text-2xl font-light text-slate-900">{property.beds}</p>
-                                  <p className="text-xs text-slate-600">Beds</p>
-                                </div>
-                              )}
-                              {property.baths != null && (
-                                <div className="text-center">
-                                  <p className="text-2xl font-light text-slate-900">{property.baths}</p>
-                                  <p className="text-xs text-slate-600">Baths</p>
-                                </div>
-                              )}
-                              {property.sqft != null && (
-                                <div className="text-center">
-                                  <p className="text-2xl font-light text-slate-900">{property.sqft}</p>
-                                  <p className="text-xs text-slate-600">Sqft</p>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Price & CTA */}
-                          <div className="flex items-center justify-between mt-auto">
-                            <div>
-                              <p className="text-xs text-slate-600 mb-1">Starting Price</p>
-                              <p className="text-xl font-semibold text-slate-900">
-                                ₱{property.price || "Contact"}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2.5 text-xs font-semibold text-white group-hover:bg-blue-700">
-                              <span>{tourPropertyIds.has(property.id) ? "Start 360° tour" : "View details"}</span>
-                              <ChevronRight size={16} className="group-hover:translate-x-1" />
-                            </div>
-                          </div>
+                          <Link href={"/buyer/properties/" + property.id} aria-label={"View " + (property.title || "property details")} className="text-right text-sm font-semibold text-blue-700 after:absolute after:inset-0 hover:underline">
+                            View details
+                          </Link>
                         </div>
                       </div>
-                    </Link>
+                    </article>
                   ))}
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-20">
+                <div className="ui-card flex flex-col items-center justify-center px-5 py-12">
                   <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
                     <Search size={32} className="text-slate-400" />
                   </div>
                   <p className="text-slate-900 text-lg font-medium mb-2">No properties found</p>
-                  <p className="text-slate-500 text-sm max-w-md text-center">
+                  <p className="max-w-full text-center text-sm text-slate-500 [overflow-wrap:anywhere]">
                     {searchTerm
                       ? `No properties match "${searchTerm}". Try adjusting your search terms.`
-                      : "No properties available at the moment."}
+                      : filters.length ? "Try changing or clearing your filters." : "No properties are available right now."}
                   </p>
-                  {(searchTerm || activeFilterCount > 0) && <button onClick={() => { setSearchTerm(""); setLocationFilter(""); setTypeFilter(""); setMinPrice(""); setMaxPrice(""); setMinBeds(""); setVirtualToursOnly(false); }} className="mt-5 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Clear search and filters</button>}
+                  {(searchTerm || filters.length > 0) && <button type="button" onClick={() => clearFilters(true)} className="ui-button ui-button-primary mt-5">Clear search and filters</button>}
                 </div>
               )}
             </>
           )}
         </div>
       </main>
-      {compareIds.length > 0 && <div className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl sm:bottom-5"><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-900">{compareIds.length} selected</p><p className="truncate text-xs text-slate-500">Choose up to 3 properties</p></div><button onClick={() => setCompareIds([])} className="rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100">Clear</button><button onClick={() => setCompareOpen(true)} disabled={compareIds.length < 2} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"><Scale size={16} />Compare</button></div>}
-      {compareOpen && <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:items-center sm:p-4"><div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-5xl overflow-y-auto rounded-3xl bg-white p-5 text-slate-900 shadow-2xl sm:p-7"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">Side-by-side</p><h2 className="mt-2 text-2xl font-semibold">Compare properties</h2></div><button onClick={() => setCompareOpen(false)} aria-label="Close comparison" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={21} /></button></div><div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">{comparedProperties.map((property) => <article key={property.id} className="overflow-hidden rounded-2xl border border-slate-200"><div className="bg-slate-900 p-5 text-white"><p className="text-xs font-semibold uppercase tracking-wider text-white/50">{property.propertyType || "Property"}</p><h3 className="mt-2 text-lg font-semibold">{property.title || "Unnamed property"}</h3><p className="mt-2 text-2xl font-semibold">₱{property.price || "Contact"}</p></div><dl className="divide-y divide-slate-100 p-5 text-sm"><CompareRow label="Availability" value={property.availabilityStatus ?? "Available"} /><CompareRow label="Location" value={property.location || "Not specified"} /><CompareRow label="Bedrooms" value={String(property.beds ?? "Not specified")} /><CompareRow label="Bathrooms" value={String(property.baths ?? "Not specified")} /><CompareRow label="Floor area" value={property.sqft ? `${property.sqft} sqft` : "Not specified"} /><CompareRow label="Virtual tour" value={tourPropertyIds.has(property.id) ? "Available" : "Not available"} /><CompareRow label="Amenities" value={property.amenities?.length ? `${property.amenities.length} listed` : "None listed"} /></dl><Link href={`/buyer/properties/${property.id}`} className="m-5 mt-0 flex items-center justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white">View property</Link></article>)}</div></div></div>}
+      {compareIds.length > 0 && (
+        <div className="ui-card fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-center gap-2 p-3 shadow-lg sm:bottom-5">
+          <p role="status" className="min-w-0 flex-1 text-sm font-semibold">{compareIds.length} selected</p>
+          <button type="button" onClick={() => setCompareIds([])} className="ui-button ui-button-secondary">Clear</button>
+          <button type="button" onClick={() => comparison.current?.showModal()} disabled={compareIds.length < 2} className="ui-button ui-button-primary">
+            <Scale size={17} aria-hidden="true" /> Compare
+          </button>
+        </div>
+      )}
+      <dialog
+        ref={comparison}
+        aria-labelledby="compare-properties-title"
+        onClick={(event) => { if (event.target === event.currentTarget) comparison.current?.close(); }}
+        className="property-comparison m-auto max-h-[calc(100dvh-1.5rem)] w-[calc(100%_-_1.5rem)] max-w-5xl rounded-3xl bg-white text-slate-900 shadow-2xl backdrop:bg-slate-950/60"
+      >
+        <div className="p-5 sm:p-7">
+          <div className="flex items-center justify-between gap-4">
+            <h2 id="compare-properties-title" className="text-2xl font-semibold">Compare properties</h2>
+            <button type="button" onClick={() => comparison.current?.close()} aria-label="Close comparison" className="ui-icon-button"><X size={21} aria-hidden="true" /></button>
+          </div>
+          <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {comparedProperties.map((property) => (
+              <article key={property.id} className="flex flex-col overflow-hidden rounded-2xl border border-slate-200">
+                <div className="bg-slate-900 p-5 text-white">
+                  <p className="text-sm text-white/75">{property.propertyType || "Property"}</p>
+                  <h3 className="mt-2 text-lg font-semibold">{property.title || "Unnamed property"}</h3>
+                  <p className="mt-2 text-2xl font-semibold">{property.price ? "\u20b1" + property.price : "Contact for price"}</p>
+                </div>
+                <dl className="divide-y divide-slate-100 p-5 text-sm">
+                  <CompareRow label="Availability" value={property.availabilityStatus ?? "Available"} />
+                  <CompareRow label="Location" value={property.location || "Not specified"} />
+                  <CompareRow label="Bedrooms" value={String(property.beds ?? "Not specified")} />
+                  <CompareRow label="Bathrooms" value={String(property.baths ?? "Not specified")} />
+                  <CompareRow label="Floor area" value={property.sqft ? property.sqft + " sqft" : "Not specified"} />
+                  <CompareRow label="Virtual tour" value={tourError ? "Unknown" : tourPropertyIds.has(property.id) ? "Available" : "Not available"} />
+                  <CompareRow label="Amenities" value={property.amenities?.length ? property.amenities.length + " listed" : "None listed"} />
+                </dl>
+                <Link href={"/buyer/properties/" + property.id} className="ui-button ui-button-primary mx-5 mb-5 mt-auto">View property</Link>
+              </article>
+            ))}
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }

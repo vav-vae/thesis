@@ -17,6 +17,8 @@ import {
   db,
 } from "@/lib/firebase";
 import AppLogo from "@/components/AppLogo";
+import AuthBackdrop from "@/components/AuthBackdrop";
+import { ThemeToggle } from "@/components/ThemeController";
 import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
@@ -122,48 +124,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 lg:p-4">
-      <div className="mx-auto grid min-h-screen max-w-[1600px] overflow-hidden bg-white lg:min-h-[calc(100vh-2rem)] lg:grid-cols-[minmax(0,1.06fr)_minmax(420px,0.94fr)] lg:rounded-[28px] lg:shadow-2xl">
-      <section className="relative hidden min-h-[640px] overflow-hidden bg-slate-950 bg-[url('/background.png')] bg-cover bg-center p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-14" aria-label="LiBot introduction">
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="metadata"
-          poster="/background.png"
-          aria-hidden="true"
-          tabIndex={-1}
-          className="absolute inset-0 h-full w-full object-cover object-center motion-reduce:hidden"
-        >
-          <source src="/login-background.mp4" type="video/mp4" />
-        </video>
-        <div className="absolute inset-0 bg-slate-950/30" />
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/10 to-slate-950/25" />
-        <div className="relative z-10 flex items-center gap-3">
-          <AppLogo className="h-12 w-12 shrink-0 object-contain" />
-          <p className="text-2xl font-semibold tracking-tight">LiBot</p>
-        </div>
-        <div className="relative z-10 max-w-xl pb-2">
-          <p className="mb-5 text-xs font-semibold uppercase tracking-[0.22em] text-white/80">Property management, made simpler</p>
-          <h2 className="text-5xl font-semibold leading-[1.08] tracking-tight xl:text-6xl">
-            A clearer view of every property.
-          </h2>
-          <p className="mt-6 max-w-md text-base leading-7 text-white/85">
-            Explore spaces, manage listings, and keep every viewing in one place.
-          </p>
-        </div>
-      </section>
-
-      <main className="flex min-h-screen items-center justify-center bg-white px-6 py-12 sm:px-12 lg:min-h-0 lg:px-14 xl:px-20">
-        <div className="w-full max-w-[420px]">
-          <div className="mb-16 flex items-center gap-3 lg:hidden">
-            <AppLogo className="h-11 w-11 object-contain" />
-            <p className="text-xl font-semibold tracking-tight text-slate-900">LiBot</p>
-          </div>
-          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Welcome to LiBot</p>
-          <h1 className="text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">Welcome back.</h1>
-          <p className="mb-10 mt-3 text-sm leading-6 text-slate-600">Sign in to continue to your account.</p>
+    <div className="auth-layout">
+      <AuthBackdrop showTour />
+      <main className="auth-main">
+        <div className="auth-topline"><Link href="/" className="auth-mobile-brand"><AppLogo className="h-10 w-10 object-contain" alt="" /><span>LiBot</span></Link><ThemeToggle /></div>
+        <div className="auth-form-wrap">
+          <h1 className="auth-title">Sign in to LiBot</h1>
+          <p className="mb-8 mt-3 text-slate-600">Access your account to continue.</p>
 
           {error && <p id="login-error" role="alert" className="mb-6 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm leading-relaxed text-red-700">{error}</p>}
           {notice && <p role="status" className="mb-6 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm leading-relaxed text-emerald-700">{notice}</p>}
@@ -220,7 +187,7 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
-            <button type="submit" disabled={loading || resettingPassword} className="flex h-13 w-full items-center justify-center rounded-xl bg-slate-900 font-semibold text-white shadow-sm transition-colors hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="submit" disabled={loading || resettingPassword} className="ui-button ui-button-primary h-13 w-full text-base">
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
@@ -232,7 +199,6 @@ export default function LoginPage() {
           </div>
         </div>
       </main>
-      </div>
     </div>
   );
 }
