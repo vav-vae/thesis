@@ -1,123 +1,73 @@
 .camera {
   position: relative;
-  display: flex;
-  height: 100%;
+  display: grid;
   width: 100%;
-  flex-direction: column;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "header" "viewfinder" "session" "controls";
   overflow: hidden;
   background: #06282e;
   color: white;
 }
 
 .header {
-  z-index: 2;
+  grid-area: header;
   display: flex;
-  min-height: 60px;
-  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
-  background: #06282e;
+  gap: 8px;
+  padding: max(4px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 4px max(12px, env(safe-area-inset-left));
 }
 
 .titleBlock { min-width: 0; }
-.eyebrow { margin-bottom: 2px; color: #a8d6d4; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.title {
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.title span { color: rgb(255 255 255 / 65%); }
+.title { font-size: 14px; font-weight: 650; line-height: 1.25; }
+.savedCount { color: #a8d6d4; font-size: 11px; line-height: 1.4; }
 .headerActions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
 
 .doneAction {
   min-height: 44px;
-  flex-shrink: 0;
-  border-radius: 12px;
-  padding: 8px 12px;
-  border: 1px solid rgb(255 255 255 / 38%);
-  color: white;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 10px;
+  padding: 6px 10px;
   font-size: 12px;
   font-weight: 600;
 }
 
-.lastPhoto { position: relative; width: 44px; height: 44px; flex-shrink: 0; overflow: hidden; border: 2px solid rgb(255 255 255 / 65%); border-radius: 10px; }
-
-.sessionBar {
-  flex-shrink: 0;
-  padding: 10px 12px 0;
-  border-top: 1px solid rgb(255 255 255 / 10%);
-  font-size: 12px;
-}
-
-.sessionIntro { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-.stepLabel { color: #a8d6d4; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.guideAction { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; padding: 4px 8px; color: #b4dfdf; font-size: 11px; font-weight: 600; }
-.viewChoices { display: flex; justify-content: stretch; gap: 6px; }
-.viewChoices button { min-height: 40px; min-width: 0; flex: 1; border-radius: 10px; padding: 6px 8px; background: rgb(255 255 255 / 8%); font-size: 11px; font-weight: 600; line-height: 1.15; }
-.viewChoices button[aria-pressed="true"] { background: #d9e7e6; color: #06323b; }
-.phaseChoices { margin-top: 6px; }
-.captureTrack { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 2px 0 8px; }
-.captureTrack span { height: 4px; border-radius: 4px; background: rgb(255 255 255 / 16%); }
-.captureTrack span[data-done="true"] { background: #4fa998; }
-.captureTrack span[data-active="true"] { background: #d8f5a2; box-shadow: 0 0 0 1px #d8f5a2; }
-.rowActions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 6px; }
-.rowActions button { min-height: 36px; padding: 6px 10px; border: 1px solid rgb(255 255 255 / 20%); border-radius: 8px; color: #d8f5a2; font-size: 11px; }
-.captureCaution { margin-top: 6px; color: rgb(255 255 255 / 55%); font-size: 10px; line-height: 1.35; }
-.currentRow { margin: 4px 0 6px; color: #d8f5a2; font-size: 11px; font-weight: 600; }
-.rowActions .guideToggle { display: none; }
-.overlapGuide { position: absolute; z-index: 1; inset: 0; pointer-events: none; clip-path: inset(0 65% 0 0); }
-.overlapImage { width: 100%; height: 100%; max-width: none; object-fit: contain; opacity: .4; transform: translateX(-65%); }
-.overlapGuide span { position: absolute; left: 8px; bottom: 58px; max-width: 30%; border-radius: 6px; padding: 5px 7px; background: rgb(0 0 0 / 65%); color: white; font-size: 10px; }
-.retakeGuide { position: absolute; z-index: 1; inset: 0; pointer-events: none; }
-.retakeImage { width: 100%; height: 100%; object-fit: contain; opacity: .35; }
-.retakeGuide span { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: 90%; padding: 5px 8px; border-radius: 6px; background: rgb(0 0 0 / 70%); color: white; font-size: 11px; text-align: center; }
-.phaseChoices button { min-height: 34px; }
-.captureTip { padding-top: 7px; color: rgb(255 255 255 / 70%); font-size: 11px; line-height: 1.3; text-align: center; }
-.orientationNote { padding-top: 6px; color: #fde68a; font-size: 11px; line-height: 1.3; text-align: center; }
-.sessionNext { display: flex; min-height: 42px; align-items: center; justify-content: center; gap: 10px; padding-top: 6px; }
-.sessionNext p { flex: 1; color: rgb(255 255 255 / 75%); font-size: 11px; line-height: 1.3; text-align: center; }
-.finishAction { display: inline-flex; min-height: 42px; flex-shrink: 0; align-items: center; justify-content: center; gap: 7px; border-radius: 11px; padding: 8px 13px; background: #d9e7e6; color: #06323b; font-size: 12px; font-weight: 700; }
-
-.iconButton, .secondaryAction, .optionAction, .shutter, .acceptAction {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.iconButton {
+.lastPhoto {
   width: 44px;
   height: 44px;
-  border-radius: 50%;
-  background: rgb(6 40 46 / 78%);
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 45%);
+  border-radius: 10px;
 }
 
 .viewfinder {
   position: relative;
-  min-height: 0;
-  flex: 1;
+  grid-area: viewfinder;
+  min-width: 0;
   overflow: hidden;
   background: black;
 }
 
-.media {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+.media { width: 100%; height: 100%; object-fit: contain; }
+
+.overlapGuide, .retakeGuide {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
 }
 
+.overlapGuide { clip-path: inset(0 65% 0 0); }
+.overlapImage { width: 100%; height: 100%; object-fit: contain; opacity: .4; transform: translateX(-65%); }
+.retakeImage { width: 100%; height: 100%; object-fit: contain; opacity: .35; }
+
 .alignmentTarget {
-  z-index: 2;
-  pointer-events: none;
   position: absolute;
+  z-index: 2;
   top: 50%;
   left: 50%;
+  pointer-events: none;
   color: #fbbf24;
 }
 
@@ -126,53 +76,93 @@
 .targetDot { position: absolute; width: 12px; height: 12px; left: -6px; top: -6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px rgb(0 0 0 / 50%); }
 
 .hint {
-  z-index: 2;
-  pointer-events: none;
   position: absolute;
-  bottom: 16px;
+  z-index: 2;
+  bottom: 8px;
   left: 50%;
   display: flex;
   width: max-content;
-  max-width: calc(100% - 32px);
+  max-width: calc(100% - 24px);
   transform: translateX(-50%);
   align-items: center;
-  gap: 8px;
-  border-radius: 20px;
-  padding: 8px 14px;
-  background: rgb(4 37 43 / 78%);
+  gap: 6px;
+  border-radius: 14px;
+  padding: 5px 10px;
+  background: rgb(4 30 35 / 86%);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.3;
   text-align: center;
+  pointer-events: none;
 }
 
 .hint svg { flex-shrink: 0; }
 
-.controls {
+.sessionBar {
+  grid-area: session;
   display: flex;
-  min-height: 104px;
-  flex-shrink: 0;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
-  gap: 28px;
-  padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  gap: 6px;
+  padding: 3px max(12px, env(safe-area-inset-right)) 2px max(12px, env(safe-area-inset-left));
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
 }
 
+.guideTrigger {
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.guideTrigger svg { flex-shrink: 0; color: #a8d6d4; }
+.guideSummary { display: grid; gap: 2px; color: #a8d6d4; font-size: 11px; line-height: 1.2; }
+.guideLabel { color: white; font-size: 12px; font-weight: 650; }
+
+.finishAction {
+  min-height: 44px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  padding: 6px 10px;
+  background: #d9e7e6;
+  color: #06323b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.controls {
+  grid-area: controls;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 7px max(12px, env(safe-area-inset-right)) max(9px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+
+.controls[data-review="true"] { grid-template-columns: auto auto; justify-content: center; gap: 16px; }
+.iconButton, .secondaryAction, .optionAction, .shutter, .acceptAction { display: inline-flex; align-items: center; justify-content: center; }
+.iconButton { width: 44px; height: 44px; flex-shrink: 0; border-radius: 50%; }
+
 .secondaryAction {
-  min-width: 56px;
-  min-height: 48px;
+  min-width: 48px;
+  min-height: 44px;
   flex-direction: column;
-  gap: 4px;
-  border-radius: 12px;
-  padding: 6px;
-  background: transparent;
-  color: rgb(255 255 255 / 80%);
-  font-size: 10px;
+  gap: 2px;
+  border-radius: 10px;
+  padding: 4px;
+  color: rgb(255 255 255 / 85%);
+  font-size: 11px;
   font-weight: 500;
 }
 
 .shutter {
-  width: 72px;
-  height: 72px;
+  grid-column: 2;
+  width: 60px;
+  height: 60px;
   border: 4px solid #06282e;
   border-radius: 50%;
   outline: 2px solid rgb(255 255 255 / 85%);
@@ -181,175 +171,152 @@
 }
 
 .acceptAction {
-  min-height: 64px;
+  min-height: 52px;
   gap: 6px;
-  border-radius: 16px;
-  padding: 12px 18px;
+  border-radius: 12px;
+  padding: 8px 14px;
   background: #073a40;
   font-size: 12px;
   font-weight: 600;
 }
 
-.camera button:disabled { cursor: default; opacity: 0.4; }
-.camera button:focus-visible, .optionAction:focus-within { outline: 2px solid #91b7b6; outline-offset: 3px; }
+.camera button:disabled { cursor: default; opacity: .45; }
+.camera button:focus-visible, .optionAction:focus-within { outline: 2px solid #91b7b6; outline-offset: 2px; }
+.camera .shutter:focus-visible { outline-color: #d8f5a2; outline-width: 3px; }
 
-@media (hover: hover) {
-  .iconButton:hover, .secondaryAction:hover, .optionAction:hover { background: rgb(255 255 255 / 15%); }
-  .shutter:hover { background: #d9e7e6; }
-  .acceptAction:hover { background: #06323b; }
-  .finishAction:hover { background: white; }
-  .doneAction:hover { background: rgb(255 255 255 / 12%); }
+.panel {
+  position: fixed;
+  inset: auto 0 max(12px, env(safe-area-inset-bottom));
+  width: min(420px, calc(100% - 24px));
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
+  max-width: none;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 18px;
+  background: #073238;
+  color: white;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
 }
 
-@media (max-width: 480px) and (orientation: portrait) {
-  .header { min-height: 56px; padding-right: 10px; padding-left: 12px; }
-  .title { font-size: 12px; }
-  .doneAction { min-height: 40px; padding: 6px 9px; font-size: 11px; }
-  .lastPhoto { width: 40px; height: 40px; }
-  .sessionNext { flex-wrap: wrap; }
-  .sessionNext p { flex-basis: 100%; }
-  .finishAction { width: 100%; }
-  .controls { min-height: 92px; padding-top: 6px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
-}
+.panel[open] { display: flex; flex-direction: column; }
+.panel::backdrop { background: rgb(0 0 0 / 55%); }
 
-.backdrop {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  background: rgb(0 0 0 / 25%);
-}
-
-.options {
-  position: absolute;
-  z-index: 4;
-  right: max(12px, env(safe-area-inset-right));
-  bottom: calc(104px + env(safe-area-inset-bottom));
-  left: max(12px, env(safe-area-inset-left));
+.panelHeader {
   display: flex;
-  max-height: calc(100% - 128px - env(safe-area-inset-bottom));
-  flex-direction: column;
-  gap: 12px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+  padding: 4px 8px 4px 16px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.panelBody {
+  display: grid;
+  gap: 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid rgb(255 255 255 / 15%);
-  border-radius: 20px;
   padding: 12px 16px 16px;
-  background: #073238;
-  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+  font-size: 13px;
+}
+
+.stepLabel { color: #a8d6d4; font-weight: 600; }
+.captureTrack { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 8px; }
+.captureTrack span { height: 4px; border-radius: 4px; background: rgb(255 255 255 / 16%); }
+.captureTrack span[data-done="true"] { background: #4fa998; }
+.captureTrack span[data-active="true"] { background: #d8f5a2; }
+.panelTip { color: #bbd4d4; line-height: 1.45; }
+
+.viewChoices { display: flex; gap: 6px; }
+.viewChoices button {
+  min-height: 44px;
+  min-width: 0;
+  flex: 1;
+  border-radius: 10px;
+  padding: 6px;
+  background: rgb(255 255 255 / 8%);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .optionAction {
   min-height: 44px;
   justify-content: flex-start;
-  gap: 10px;
+  gap: 8px;
   border-radius: 10px;
-  padding: 10px 12px;
-  background: rgb(255 255 255 / 7%);
-  font-size: 12px;
+  padding: 8px 10px;
+  background: rgb(255 255 255 / 8%);
+  font-size: 13px;
   font-weight: 500;
+  text-align: left;
 }
 
 .optionAction svg { flex-shrink: 0; }
+.viewChoices button[aria-pressed="true"], .optionAction[aria-pressed="true"] { background: #d9e7e6; color: #06323b; }
+
+.cameraUnavailable {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow-y: auto;
+  padding: 12px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.cameraUnavailable > div { max-width: 380px; margin: auto; }
+.recoveryActions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
 
 .feedback {
   position: absolute;
   z-index: 2;
-  right: 16px;
-  bottom: calc(116px + env(safe-area-inset-bottom));
-  left: 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  border-radius: 12px;
-  padding: 10px;
+  top: 8px;
+  right: 12px;
+  left: 12px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin: auto;
+  border-radius: 10px;
+  padding: 6px 10px;
   background: rgb(4 37 43 / 92%);
   font-size: 12px;
   text-align: center;
+  pointer-events: none;
 }
 
-/* Short landscape screens use a camera-style side rail instead of a footer. */
+@media (hover: hover) {
+  .doneAction:hover, .guideTrigger:hover, .iconButton:hover, .secondaryAction:hover,
+  .viewChoices button[aria-pressed="false"]:hover, .optionAction:not([aria-pressed="true"]):hover { background: rgb(255 255 255 / 15%); }
+  .shutter:hover, .finishAction:hover { background: #eef8f7; }
+}
+
 @media (orientation: landscape) and (max-height: 600px) {
   .camera {
-    --rail-width: calc(96px + env(safe-area-inset-right));
-    flex-direction: row;
+    grid-template-columns: minmax(0, 1fr) calc(76px + env(safe-area-inset-right));
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "header controls" "viewfinder controls" "session controls";
   }
 
-  .header {
-    position: absolute;
-    top: 0;
-    right: var(--rail-width);
-    left: 0;
-    min-height: 64px;
-    padding-top: max(8px, env(safe-area-inset-top));
-    padding-right: 12px;
-    padding-left: max(16px, env(safe-area-inset-left));
-    background: linear-gradient(rgb(0 0 0 / 85%), rgb(0 0 0 / 30%));
-  }
-
-  .viewfinder { height: 100%; }
-  .retakeGuide span { top: auto; bottom: 74px; }
-
-  .sessionBar {
-    position: absolute;
-    z-index: 2;
-    top: max(64px, calc(48px + env(safe-area-inset-top)));
-    right: auto;
-    left: max(12px, env(safe-area-inset-left));
-    padding: 6px 8px;
-    border-radius: 12px;
-    background: rgb(4 37 43 / 88%);
-    width: min(320px, calc(100% - var(--rail-width) - 24px));
-    max-height: calc(100% - 130px);
-    overflow-y: auto;
-  }
-
-  .rowActions .guideToggle { display: inline-flex; align-items: center; }
-  .sessionBar:not([data-expanded="true"]) .phaseChoices,
-  .sessionBar:not([data-expanded="true"]) .captureTip,
-  .sessionBar:not([data-expanded="true"]) .captureCaution { display: none; }
-
-  .sessionBar .viewChoices button { min-height: 32px; }
-  .rowActions button { min-height: 30px; }
-  .captureCaution { max-width: 300px; }
-  .sessionIntro { min-height: 22px; margin-bottom: 3px; }
-  .guideAction { min-height: 24px; }
-  .captureTip { padding-top: 3px; }
-  .sessionNext { min-height: 34px; padding-top: 3px; }
-  .finishAction { min-height: 32px; }
+  .sessionBar { padding-bottom: max(3px, env(safe-area-inset-bottom)); border-bottom: 0; }
 
   .controls {
-    display: grid;
-    width: var(--rail-width);
-    height: 100%;
-    min-height: 0;
+    grid-template-columns: 1fr;
     grid-template-rows: 1fr auto 1fr;
-    justify-items: center;
-    gap: 8px;
-    padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) 12px;
-    border-left: 1px solid rgb(255 255 255 / 8%);
+    padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) 8px;
+    border-left: 1px solid rgb(255 255 255 / 10%);
   }
 
-  .shutter { grid-row: 2; width: 64px; height: 64px; }
-  .acceptAction { grid-row: 2; width: 68px; flex-direction: column; padding: 12px 4px; }
-  .hint { bottom: max(14px, env(safe-area-inset-bottom)); }
+  .controls[data-review="true"] { grid-template-columns: 1fr; }
+  .shutter { grid-column: 1; grid-row: 2; width: 56px; height: 56px; }
+  .acceptAction { grid-row: 2; flex-direction: column; padding: 6px 4px; text-align: center; }
 
-  .options {
-    top: max(12px, env(safe-area-inset-top));
-    right: calc(var(--rail-width) + 12px);
-    bottom: max(12px, env(safe-area-inset-bottom));
-    left: auto;
-    width: min(340px, calc(100% - var(--rail-width) - max(24px, env(safe-area-inset-left))));
-    max-height: none;
+  .panel {
+    inset: max(12px, env(safe-area-inset-top)) calc(88px + env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) auto;
+    width: min(360px, calc(100% - 112px));
+    margin: auto 0;
   }
-
-  .feedback {
-    right: calc(var(--rail-width) + 16px);
-    bottom: max(58px, env(safe-area-inset-bottom));
-    left: max(16px, env(safe-area-inset-left));
-  }
-}
-
-@media (orientation: landscape) and (max-height: 450px) {
-  .alignmentTarget { top: 65%; }
 }
