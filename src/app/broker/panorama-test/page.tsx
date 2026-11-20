@@ -18,13 +18,13 @@ import {
   LoaderCircle,
   RotateCcw,
   Images,
-  Trash2,
   UploadCloud,
 } from "lucide-react";
 
 import PanoramaViewer from "@/components/PanoramaViewer";
 import PhoneCameraCapture from "@/components/PhoneCameraCapture";
-import CapturedPhotoPreview, { LocalCaptureImage } from "@/components/CapturedPhotoPreview";
+import CapturedPhotoGallery from "@/components/CapturedPhotoGallery";
+import CapturedPhotoPreview from "@/components/CapturedPhotoPreview";
 import { auth, db } from "@/lib/firebase";
 import { useTourGenerationJob } from "@/hooks/useTourGenerationJob";
 import { recordTourLog } from "@/lib/tour-logs";
@@ -240,7 +240,14 @@ export default function CreateVirtualTourPage() {
   const sourceImageUrls = restoredInput?.image_urls ?? uploadedSources.map((source) => source.url);
   const sourceCaptureViews = restoredInput?.capture_views ?? files.map((file) => captureViews.get(file) ?? "around");
   const previewIndex = previewedFile ? files.indexOf(previewedFile) : -1;
-  const previewValidation = validations.find((item) => item.file === previewedFile);
+  const validationByFile = useMemo(() => new Map(validations.map((item) => [item.file, item])), [validations]);
+  const previewValidation = previewedFile ? validationByFile.get(previewedFile) : undefined;
+  const reviewPhotos = files.map((file) => {
+    const view = captureViews.get(file) ?? "around";
+    const issues = validationByFile.get(file)?.issues;
+    const issue = issues?.find((item) => item.severity === "error") ?? issues?.[0];
+    return { file, view, issue: issue?.severity };
+  });
   const readyToGenerate = Boolean(selectedProperty && roomType.trim() && files.length >= MIN_CAPTURE_IMAGES && sourcesMatchFiles && preflightPassed && !validating && !blockingIssues);
   const quality = useMemo(() => {
     if (!metrics) return null;
@@ -477,14 +484,14 @@ export default function CreateVirtualTourPage() {
     }
   };
 
-  const removeFile = (index: number) => {
-    const removed = filesRef.current[index];
-    if (removed === previewedFile) setPreviewedFile(null);
+  const removeFile = (file: File) => {
+    if (generating || publishing || !filesRef.current.includes(file)) return;
+    if (file === previewedFile) setPreviewedFile(null);
     const nextViews = new Map(captureViewsRef.current);
-    nextViews.delete(removed);
+    nextViews.delete(file);
     captureViewsRef.current = nextViews;
     setCaptureViews(nextViews);
-    void selectFiles(filesRef.current.filter((_, fileIndex) => fileIndex !== index));
+    void selectFiles(filesRef.current.filter((item) => item !== file));
   };
 
   const runReconstruction = async (sources: UploadedSource[], selected: File[], revision: number) => {
@@ -674,7 +681,7 @@ export default function CreateVirtualTourPage() {
             <div className="border-y border-slate-200 bg-slate-50/60 p-6 sm:p-8">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Step 2</p>
               <h2 className="mt-2 text-xl font-semibold">Capture around, top, and bottom</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">Start with a full circle of level views, then add overlapping ceiling and floor views. Use at least 6 landscape photos. There is no fixed photo-count limit. Larger sets take longer and remain subject to processing-size limits. In live capture, take consecutive photos and switch between walls, ceiling, and floor without closing the camera. Tap Finish &amp; generate to create the tour, or Done to review and check the photos first.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">Start with a full circle of level views, then add overlapping ceiling and floor views. Use at least 6 landscape photos. There is no fixed photo-count limit. Larger sets take longer and remain subject to processing-size limits. In live capture, take consecutive photos and switch between walls, ceiling, and floor without closing the camera. Tap Finish &amp; generate to create the tour, or Review photos to check the set first.</p>
               <div className="mt-5 grid gap-2 sm:grid-cols-3" role="group" aria-label="Next photo type">
                 {CAPTURE_VIEWS.map((view) => <button key={view} type="button" aria-pressed={captureView === view} disabled={validating || generating || publishing} onClick={() => setCaptureView(view)} className={`rounded-xl border p-3 text-left disabled:opacity-50 ${captureView === view ? "border-blue-300 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white"}`}><p className="text-sm font-semibold">{CAPTURE_GUIDE[view].label}</p><p className="mt-1 text-xs text-slate-500">{sourceCaptureViews.filter((item) => item === view).length} photos added</p></button>)}
               </div>
@@ -690,11 +697,7 @@ export default function CreateVirtualTourPage() {
                 <p className="mt-2 text-center text-xs text-slate-400">Landscape JPG, PNG, or WEBP · recommended 1280×720 or larger</p>
               </div>
               {validating && <p role="status" className="mt-4 flex items-center gap-2 text-sm text-blue-700"><LoaderCircle className="animate-spin" size={17} />{validationStage || "Checking photos…"}</p>}
-              {validations.length > 0 && <div className="mt-5 space-y-2">{validations.map((item, index) => {
-                const hasError = item.issues.some((issue) => issue.severity === "error");
-                const firstIssue = item.issues.find((issue) => issue.severity === "error") ?? item.issues[0];
-                return <div key={`${item.file.name}-${index}`} className={`flex items-center gap-3 rounded-xl border bg-white p-3 ${hasError ? "border-red-200" : firstIssue ? "border-amber-200" : "border-slate-200"}`}><button type="button" onClick={() => setPreviewedFile(item.file)} aria-label={`Preview photo ${index + 1}: ${item.file.name}`} className="group relative size-14 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500"><LocalCaptureImage file={item.file} alt={`Photo ${index + 1} thumbnail`} className="size-full object-cover" /><span className="absolute bottom-0 right-0 rounded-tl-md bg-slate-950/75 p-1 text-white"><Eye size={13} /></span></button><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{index + 1}. {CAPTURE_GUIDE[captureViews.get(item.file) ?? "around"].label} · {item.file.name}</p><p className={`mt-0.5 text-xs ${hasError ? "text-red-700" : firstIssue ? "text-amber-700" : "text-slate-400"}`}>{firstIssue?.message || `${item.width}×${item.height} · ${item.keypoints == null ? "Overlap check pending" : `${item.keypoints} features · Checked`}`}</p>{item.blurScore !== undefined && <p className="mt-1 text-[10px] text-slate-400">Sharpness {item.blurScore.toFixed(0)} · Brightness {item.brightness?.toFixed(0)} · {item.keypoints} keypoints</p>}</div><select aria-label={`Photo type for image ${index + 1}`} value={captureViews.get(item.file) ?? "around"} disabled={validating || generating || publishing} onChange={(event) => { const next = event.target.value as CaptureView; updateCaptureView(item.file, next); void selectFiles(filesRef.current); }} className="max-w-28 rounded-lg border border-slate-200 p-2 text-xs">{CAPTURE_VIEWS.map((view) => <option key={view} value={view}>{CAPTURE_GUIDE[view].label}</option>)}</select><button type="button" disabled={validating || generating || publishing} onClick={() => startRetake(item.file)} aria-label={`Retake photo ${index + 1}`} title="Retake only this photo" className="rounded-lg p-2 text-blue-600 hover:bg-blue-50"><RotateCcw size={17} /></button><button type="button" disabled={generating || publishing} onClick={() => removeFile(index)} aria-label={`Remove image ${index + 1}: ${item.file.name}`} title="Remove only this photo" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-red-600"><Trash2 size={17} /></button></div>;
-              })}</div>}
+              {reviewPhotos.length > 0 && <CapturedPhotoGallery photos={reviewPhotos} onPreview={setPreviewedFile} />}
               {analysisIssues.length > 0 && <div className="mt-5 space-y-2">{analysisIssues.map((issue) => <div key={issue.code} role={issue.severity === "error" ? "alert" : "status"} className={`rounded-xl border p-3 text-sm ${issue.severity === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}><p className="font-semibold">Image set overlap</p><p className="mt-1">{issue.message}</p></div>)}</div>}
               {pairValidations.length > 0 && <div className="mt-5"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Matched image overlap</p><p className="mb-3 mt-1 text-xs leading-5 text-slate-500">These links connect matching views across the full image set. Every image must connect to the others, even when uploaded out of order.</p><div className="grid gap-2 sm:grid-cols-2">{pairValidations.map((pair) => {
                 const issue = pair.issues[0];
@@ -725,7 +728,31 @@ export default function CreateVirtualTourPage() {
           {devLogs.length === 0 ? <p className="px-1 py-3 text-xs text-slate-400">Live camera, upload, validation, generation, and publish events will appear here.</p> : devLogs.map((entry) => <article key={entry.id} className={`rounded-lg border px-3 py-2 ${entry.level === "error" ? "border-red-900/80 bg-red-950/50" : "border-slate-800 bg-slate-900"}`}><p className={`text-xs font-semibold ${entry.level === "error" ? "text-red-300" : "text-slate-200"}`}><time className="mr-2 font-normal text-slate-500">{entry.time}</time>{entry.message}</p>{entry.detail && <details open={entry.level === "error"} className="mt-2"><summary className="cursor-pointer text-[11px] text-slate-400">Diagnostic details</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-300">{entry.detail}</pre></details>}</article>)}
         </div>}
       </section>}
-      {previewedFile && previewIndex >= 0 && <CapturedPhotoPreview file={previewedFile} index={previewIndex} total={files.length} view={captureViews.get(previewedFile) ?? "around"} dimensions={previewValidation} issues={previewValidation?.issues.map((issue) => issue.message)} onPrevious={previewIndex > 0 ? () => setPreviewedFile(files[previewIndex - 1]) : undefined} onNext={previewIndex < files.length - 1 ? () => setPreviewedFile(files[previewIndex + 1]) : undefined} onClose={() => setPreviewedFile(null)} onRetake={!generating && !publishing && !validating ? () => startRetake(previewedFile) : undefined} onImageError={() => reportError("Photo preview", new Error("The saved image could not be displayed."), { file: previewedFile, photoIndex: previewIndex })} />}
+      {previewedFile && previewIndex >= 0 && (
+        <CapturedPhotoPreview
+          file={previewedFile}
+          index={previewIndex}
+          total={files.length}
+          view={captureViews.get(previewedFile) ?? "around"}
+          details={previewValidation}
+          issues={previewValidation?.issues.map((issue) => issue.message)}
+          edit={{
+            disabled: validating || generating || publishing,
+            removeDisabled: generating || publishing,
+            onViewChange: (view) => {
+              if (view === (captureViews.get(previewedFile) ?? "around")) return;
+              updateCaptureView(previewedFile, view);
+              void selectFiles(filesRef.current);
+            },
+            onRetake: () => startRetake(previewedFile),
+            onRemove: () => removeFile(previewedFile),
+          }}
+          onPrevious={previewIndex > 0 ? () => setPreviewedFile(files[previewIndex - 1]) : undefined}
+          onNext={previewIndex < files.length - 1 ? () => setPreviewedFile(files[previewIndex + 1]) : undefined}
+          onClose={() => setPreviewedFile(null)}
+          onImageError={() => reportError("Photo preview", new Error("The saved image could not be displayed."), { file: previewedFile, photoIndex: previewIndex })}
+        />
+      )}
       {retakeFile && <PhoneCameraCapture captureProgress={captureProgress} imageNumber={files.indexOf(retakeFile) + 1} captureView={captureViews.get(retakeFile) ?? "around"} replacement={{ original: retakeFile, target: captureShots.get(retakeFile)?.view === (captureViews.get(retakeFile) ?? "around") ? captureShots.get(retakeFile) : undefined, total: files.length, phase: captureShots.get(retakeFile)?.phase ?? ((captureViews.get(retakeFile) ?? "around") === "around" ? "ring" : "bridge") }} onCapture={(file, _heading, context) => replaceCapture(file, context)} onClose={() => setRetakeFile(null)} onDebug={(message, detail) => addDevLog("error", message, detail)} />}
       {cameraOpen && <PhoneCameraCapture captureProgress={captureProgress} captureView={captureView} onCaptureViewChange={setCaptureView} imageNumber={files.length + 1} onFinish={selectedProperty && roomType.trim() && files.length >= MIN_CAPTURE_IMAGES ? () => void finishCaptureAndGenerate() : undefined} onCapture={async (file, _heading, context) => { addDevLog("info", `Live camera captured ${file.name} (${file.type || "unknown type"}, ${Math.round(file.size / 1024)} KB).`); const accepted = await addCapture(file, true); if (accepted && context) {
         setCaptureShots((previous) => new Map(previous).set(file, context));
