@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { tourRegenerationInput } from "../src/lib/tour-regeneration.ts";
+import { appendOverheadPhoto, tourRegenerationInput } from "../src/lib/tour-regeneration.ts";
 
 const tour = {
   brokerId: "broker-1", propertyId: "property-1", roomType: "Living room", algorithm: "SIFT", ransacThreshold: 4,
@@ -30,4 +30,18 @@ test("legacy tours can omit view labels and receive a valid threshold", () => {
   assert.equal(input.capture_views, undefined);
   assert.equal(input.ransac_threshold, 4);
   assert.equal(input.algorithm, "orb");
+});
+
+test("adding an overhead photo retains every saved photo and view in order", () => {
+  const input = tourRegenerationInput(tour, "broker-1");
+  const overhead = "https://example.com/overhead.jpg";
+  const result = appendOverheadPhoto(input, overhead);
+  assert.deepEqual(result, {
+    ...input,
+    image_urls: [...tour.sourceImageUrls, overhead],
+    capture_views: [...tour.captureViews, "top"],
+  });
+  assert.deepEqual(input.image_urls, tour.sourceImageUrls);
+  assert.throws(() => appendOverheadPhoto(result, overhead), /already in the saved capture set/);
+  assert.throws(() => appendOverheadPhoto({ ...input, capture_views: ["top"] }, overhead), /missing their view labels/);
 });

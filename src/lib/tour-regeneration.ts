@@ -1,5 +1,13 @@
 import type { PanoramaJob } from "./panorama-job-poll";
 
+export function appendOverheadPhoto(input: PanoramaJob<unknown>["input"], url: string): PanoramaJob<unknown>["input"] {
+  if (!input.capture_views || input.capture_views.length !== input.image_urls.length) {
+    throw new Error("The saved photos are missing their view labels.");
+  }
+  if (input.image_urls.includes(url)) throw new Error("This photo is already in the saved capture set.");
+  return { ...input, image_urls: [...input.image_urls, url], capture_views: [...input.capture_views, "top"] };
+}
+
 /** Reuse the owner's real source photos; never regenerate from the stitched image. */
 export function tourRegenerationInput(tour: Record<string, unknown>, brokerId: string): PanoramaJob<unknown>["input"] {
   if (!brokerId || tour.brokerId !== brokerId) throw new Error("Sign in as the owner of this tour to regenerate it.");
