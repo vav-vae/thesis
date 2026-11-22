@@ -145,7 +145,13 @@ async def run_job(store, job: dict, reconstruct):
         http_status = error.status_code if isinstance(error, HTTPException) else 500
         code = "TOUR_JOB_INPUT_TOO_LARGE" if http_status == 413 else "TOUR_JOB_TIMEOUT" if http_status == 504 else "TOUR_JOB_FAILED"
         job.update(status="failed", stage=latest_stage, code=code, httpStatus=http_status, error=str(error.detail) if isinstance(error, HTTPException) else "The processor could not finish this job. Use the job and request IDs to inspect server logs.")
-        logger.exception("panorama_job_failed job_id=%s request_id=%s stage=%s", job["id"], job["requestId"], latest_stage)
+        if http_status == 504:
+            logger.error(
+                "panorama_job_failed job_id=%s request_id=%s stage=%s code=%s elapsed_seconds=%.1f detail=%s",
+                job["id"], job["requestId"], latest_stage, code, time.monotonic() - started, job["error"],
+            )
+        else:
+            logger.exception("panorama_job_failed job_id=%s request_id=%s stage=%s", job["id"], job["requestId"], latest_stage)
     finally:
         if task is not None and not task.done():
             task.cancel()

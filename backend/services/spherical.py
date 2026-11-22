@@ -9,6 +9,11 @@ import cv2
 import numpy as np
 
 
+ALIGNMENT_POINT_BUDGET = 8_000
+MIN_ALIGNMENT_POINTS_PER_EDGE = 16
+DENSE_ALIGNMENT_ITERATIONS = 16
+
+
 @dataclass
 class SphericalMatches:
     """Shared evidence for overlap validation and spherical reconstruction."""
@@ -104,13 +109,24 @@ def _rotation_condition(homography, first_size, second_size):
     return best
 
 
-def _probe_has_overlap(search, first_descriptors, probe_ids, first_points, second_points, first_size, second_size, ratio_threshold, tolerance):
-    pairs = search.knnMatch(first_descriptors[probe_ids], k=2)
-    good = [pair[0] for pair in pairs if len(pair) == 2 and pair[0].distance < ratio_threshold * pair[1].distance]
-    if len(good) < 8:
+def _sift_ratio_matches(search, descriptors, search_params, ratio_threshold):
+    # FLANN returns squared L2 distances. Match FlannBasedMatcher's float32
+    # square root and the previous ratio comparison on Python floats.
+    indices, distances = search.knnSearch(descriptors, 2, params=search_params)
+    np.sqrt(distances, out=distances)
+    query_indices = np.flatnonzero(
+        (indices[:, 0] >= 0) & (indices[:, 1] >= 0)
+        & (distances[:, 0] < ratio_threshold * distances[:, 1].astype(np.float64))
+    )
+    return query_indices, indices[query_indices, 0], distances[query_indices, 0]
+
+
+def _probe_has_overlap(search, search_params, first_descriptors, probe_ids, first_points, second_points, first_size, second_size, ratio_threshold, tolerance):
+    query_indices, train_indices, _ = _sift_ratio_matches(search, first_descriptors[probe_ids], search_params, ratio_threshold)
+    if len(query_indices) < 8:
         return False
-    source = first_points[[probe_ids[match.queryIdx] for match in good]] - np.float32(first_size) / 2
-    target = second_points[[match.trainIdx for match in good]] - np.float32(second_size) / 2
+    source = first_points[probe_ids[query_indices]] - np.float32(first_size) / 2
+    target = second_points[train_indices] - np.float32(second_size) / 2
     matrix, mask = cv2.findHomography(source, target, cv2.USAC_MAGSAC, tolerance, maxIters=1000, confidence=.99)
     return (matrix is not None and mask is not None and int(mask.sum()) >= 6
             and _rotation_condition(matrix, first_size, second_size) <= 2.5)
@@ -162,6 +178,7 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
         graph[second].add(first)
     matcher = cv2.BFMatcher(norm)
     indexes = {}
+    search_params = {"checks": 32 if count > 40 else 64}
     deferred_pairs = []
     full_pairs_checked = previous_stats.get('full_pairs_checked', 0)
     use_probe = not full_search and norm == cv2.NORM_L2 and count > 40 and capture_views is not None and len(capture_views) == count
@@ -187,10 +204,7 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
                     # Large sets otherwise spend most of the invocation on
                     # approximate descriptor search. Geometry/inlier gates and
                     # the final all-camera reprojection validation are unchanged.
-                    search = cv2.FlannBasedMatcher(dict(algorithm=1, trees=4), dict(checks=32 if count > 40 else 64))
-                    search.add([second_descriptors])
-                    search.train()
-                    indexes[second] = search
+                    indexes[second] = cv2.flann_Index(second_descriptors, {"algorithm": 1, "trees": 4})
                 if use_probe and {capture_views[first], capture_views[second]} == {'top', 'bottom'}:
                     if first not in probe_ids:
                         cells = {}
@@ -203,25 +217,32 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
                         selected = list(cells.values())[:192]
                         selected_set = set(selected)
                         selected.extend(index for index in ordered if index not in selected_set)
-                        probe_ids[first] = selected[:192]
-                    if not _probe_has_overlap(indexes[second], first_descriptors, probe_ids[first], keypoints[first], keypoints[second], a.img_size, b.img_size, ratio_threshold, ransac_threshold):
+                        probe_ids[first] = np.array(selected[:192], dtype=np.intp)
+                    if not _probe_has_overlap(indexes[second], search_params, first_descriptors, probe_ids[first], keypoints[first], keypoints[second], a.img_size, b.img_size, ratio_threshold, ransac_threshold):
                         deferred_pairs.append((first, second))
                         continue
-                candidates = indexes[second].knnMatch(first_descriptors, k=2)
+                query_indices, train_indices, distances = _sift_ratio_matches(
+                    indexes[second], first_descriptors, search_params, ratio_threshold,
+                )
+                candidate_count = len(first_descriptors)
             else:
                 candidates = matcher.knnMatch(first_descriptors, second_descriptors, k=2)
+                candidate_count = len(candidates)
+                good = [pair[0] for pair in candidates if len(pair) == 2 and pair[0].distance < ratio_threshold * pair[1].distance]
+                query_indices = [match.queryIdx for match in good]
+                train_indices = [match.trainIdx for match in good]
             full_pairs_checked += 1
-            good = [pair[0] for pair in candidates if len(pair) == 2 and pair[0].distance < ratio_threshold * pair[1].distance]
-            if len(good) < 10:
+            good_count = len(query_indices)
+            if good_count < 10:
                 continue
-            source = keypoints[first][[match.queryIdx for match in good]] - np.float32(a.img_size) / 2
-            target = keypoints[second][[match.trainIdx for match in good]] - np.float32(b.img_size) / 2
+            source = keypoints[first][query_indices] - np.float32(a.img_size) / 2
+            target = keypoints[second][train_indices] - np.float32(b.img_size) / 2
             homography, mask = cv2.findHomography(source, target, cv2.USAC_MAGSAC, ransac_threshold, maxIters=3000, confidence=.995)
             if homography is None or mask is None or not np.isfinite(homography).all():
                 continue
             inliers = int(mask.sum())
-            confidence = inliers / (8 + .3 * len(good))
-            if inliers < 15 or inliers / len(good) < .2:
+            confidence = inliers / (8 + .3 * good_count)
+            if inliers < 15 or inliers / good_count < .2:
                 continue
             condition = _rotation_condition(homography, a.img_size, b.img_size)
             if condition > 2.5:
@@ -234,6 +255,14 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
                 continue
             graph[first].add(second)
             graph[second].add(first)
+            if norm == cv2.NORM_L2:
+                # Only geometric inliers are passed to camera refinement.
+                verified = mask.ravel() != 0
+                good = [
+                    cv2.DMatch(int(src), int(dst), float(distance))
+                    for src, dst, distance in zip(query_indices[verified], train_indices[verified], distances[verified])
+                ]
+                mask = np.ones(len(good), np.uint8)
             alignment_points = _alignment_sample(good, mask, keypoints[first], a.img_size)
             forward, reverse = pairwise[first * count + second], pairwise[second * count + first]
             for match, src, dst, matrix, points in (
@@ -248,8 +277,8 @@ def prepare_spherical_matches(images, detector, norm, ratio_threshold, ransac_th
             reports.append({
                 'pair': len(reports) + 1, 'from_index': first, 'to_index': second,
                 'keypoints_base': len(keypoints[first]), 'keypoints_next': len(keypoints[second]),
-                'candidate_matches': len(candidates), 'good_matches': len(good),
-                'inliers': inliers, 'inlier_ratio': round(inliers / len(good), 4),
+                'candidate_matches': candidate_count, 'good_matches': good_count,
+                'inliers': inliers, 'inlier_ratio': round(inliers / good_count, 4),
                 'alignment_matches': len(alignment_points),
                 'rotation_condition': round(condition, 4),
                 'processing_ms': round((perf_counter() - pair_started) * 1000, 2),
@@ -325,6 +354,19 @@ def _estimate_cameras(prepared, cameras=None):
             match.num_inliers = original
 
 
+def _alignment_correspondences(prepared):
+    count = len(prepared.features)
+    points = [np.array([point.pt for point in feature.keypoints], np.float64) for feature in prepared.features]
+    for report in prepared.reports:
+        first, second = report['from_index'], report['to_index']
+        match = prepared.pairwise[first * count + second]
+        pairs = [point for point, valid in zip(match.getMatches(), match.getInliers()) if valid]
+        if pairs:
+            source = points[first][[point.queryIdx for point in pairs]]
+            target = points[second][[point.trainIdx for point in pairs]]
+            yield first, second, source, target
+
+
 def _alignment_quality(prepared, cameras):
     """Check fitted cameras against real inlier pixels, including every photo.
 
@@ -340,18 +382,10 @@ def _alignment_quality(prepared, cameras):
         for camera, feature in zip(cameras, prepared.features)
     ):
         return invalid
-    points = [np.array([point.pt for point in feature.keypoints], np.float64) for feature in prepared.features]
     graph = [set() for _ in range(count)]
     errors, per_photo = [], [[] for _ in range(count)]
     rejected = 0
-    for report in prepared.reports:
-        first, second = report['from_index'], report['to_index']
-        match = prepared.pairwise[first * count + second]
-        pairs = [point for point, valid in zip(match.getMatches(), match.getInliers()) if valid]
-        if not pairs:
-            continue
-        source = points[first][[point.queryIdx for point in pairs]]
-        target = points[second][[point.trainIdx for point in pairs]]
+    for first, second, source, target in _alignment_correspondences(prepared):
         transform = cameras[second].K() @ cameras[second].R.T @ cameras[first].R @ np.linalg.inv(cameras[first].K())
         projected = np.column_stack((source, np.ones(len(source)))) @ transform.T
         front = projected[:, 2] > 1e-6
@@ -383,21 +417,98 @@ def _alignment_quality(prepared, cameras):
     }
 
 
-def _refine_cameras(prepared, on_progress=None):
-    """Recover a failed ray fit with constrained pixel reprojection.
+def _nearest_rotations(matrices):
+    left, _, right = np.linalg.svd(matrices)
+    left[:, :, -1] *= np.linalg.det(left @ right)[:, None]
+    return left @ right
 
-    OpenCV's ray optimizer can step through negative focal lengths and produce
-    NaNs. Recovery starts from untouched cameras, fixes aspect/principal point,
-    and validates the new solution against observed image correspondences.
+
+def _refine_ray_rotations(prepared, cameras):
+    """Refit rotations using Huber-weighted unit rays at the estimated focals."""
+    inverse_intrinsics = [np.linalg.inv(camera.K()) for camera in cameras]
+    first_indices, second_indices, first_rays, second_rays = [], [], [], []
+    for first, second, source, target in _alignment_correspondences(prepared):
+        for index, pixels, indices, rays in (
+            (first, source, first_indices, first_rays), (second, target, second_indices, second_rays),
+        ):
+            directions = np.column_stack((pixels, np.ones(len(pixels)))) @ inverse_intrinsics[index].T
+            rays.append(directions / np.linalg.norm(directions, axis=1, keepdims=True))
+            indices.extend([index] * len(pixels))
+
+    first_indices, second_indices = np.asarray(first_indices), np.asarray(second_indices)
+    first_rays, second_rays = np.vstack(first_rays), np.vstack(second_rays)
+    rotations = np.array([camera.R for camera in cameras], np.float64)
+    # A unit-ray separation of .02 is about one degree. Beyond that, the
+    # Huber loss limits the influence of parallax and other inconsistent rays.
+    for _ in range(35):
+        first_world = np.einsum('nij,nj->ni', rotations[first_indices], first_rays)
+        second_world = np.einsum('nij,nj->ni', rotations[second_indices], second_rays)
+        distance = np.linalg.norm(first_world - second_world, axis=1)
+        weights = (1. / np.maximum(1., distance / .02))[:, None, None]
+        covariance = np.zeros_like(rotations)
+        np.add.at(covariance, first_indices, second_world[:, :, None] * first_rays[:, None, :] * weights)
+        np.add.at(covariance, second_indices, first_world[:, :, None] * second_rays[:, None, :] * weights)
+        # Average each fitted orientation with its previous value to damp
+        # simultaneous updates between neighboring cameras.
+        rotations = _nearest_rotations(_nearest_rotations(covariance) + rotations)
+
+    refined = _copy_cameras(cameras)
+    for camera, rotation in zip(refined, rotations):
+        camera.R = rotation.astype(np.float32)
+    return refined
+
+
+def _bundle_adjustment_matches(prepared):
+    """Bound the dense OpenCV fit while retaining every verified edge."""
+    features, pairwise = prepared.features, prepared.pairwise
+    count = len(features)
+    edges = [(report['from_index'], report['to_index']) for report in prepared.reports]
+    point_count = sum(pairwise[first * count + second].num_inliers for first, second in edges)
+    if point_count <= ALIGNMENT_POINT_BUDGET:
+        return pairwise
+
+    # OpenCV builds a dense Jacobian with columns for every camera and rows
+    # for every fitted point. Give each edge room to constrain its cameras.
+    limit = max(MIN_ALIGNMENT_POINTS_PER_EDGE, ALIGNMENT_POINT_BUDGET // len(edges))
+    sampled = list(pairwise)
+    keypoints = [[point.pt for point in feature.keypoints] for feature in features]
+    for first, second in edges:
+        forward = first * count + second
+        match = pairwise[forward]
+        if match.num_inliers <= limit:
+            continue
+        points = _alignment_sample(
+            match.getMatches(), np.asarray(match.getInliers()), keypoints[first], features[first].img_size, limit,
+        )
+        reverse_points = [cv2.DMatch(point.trainIdx, point.queryIdx, point.distance) for point in points]
+        for index, matches in ((forward, points), (second * count + first, reverse_points)):
+            original = pairwise[index]
+            fit_match = cv2.detail.MatchesInfo()
+            fit_match.src_img_idx, fit_match.dst_img_idx = original.src_img_idx, original.dst_img_idx
+            fit_match.H, fit_match.confidence = original.H, original.confidence
+            fit_match.num_inliers = len(matches)
+            fit_match.matches, fit_match.inliers_mask = tuple(matches), (1,) * len(matches)
+            sampled[index] = fit_match
+    return sampled
+
+
+def _refine_cameras(prepared, on_progress=None):
+    """Fit cameras and validate them against the verified correspondences.
+
+    Dense captures use a sampled native fit and can recover from inconsistent
+    observations by refitting rotations. Constrained pixel reprojection starts
+    from the original estimates if OpenCV's ray fit goes unstable.
     """
     from .panorama_service import StitchingError
 
-    features, pairwise = prepared.features, prepared.pairwise
+    features = prepared.features
     ok, initial = _estimate_cameras(prepared)
     if not ok:
         raise StitchingError('Camera positions could not be estimated from the shared photo detail.')
     for camera in initial:
         camera.R = camera.R.astype(np.float32)
+    fit_matches = _bundle_adjustment_matches(prepared)
+    dense = fit_matches is not prepared.pairwise
     best_quality = None
     for method in ('ray', 'reprojection', 'rotation_only'):
         if on_progress:
@@ -428,10 +539,12 @@ def _refine_cameras(prepared, on_progress=None):
             mask[0, 0] = int(method == 'reprojection')
             adjuster.setRefinementMask(mask)
             iterations = 40
+        if dense:
+            iterations = min(iterations, DENSE_ALIGNMENT_ITERATIONS)
         adjuster.setConfThresh(1.0)
         adjuster.setTermCriteria((cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, iterations, 1e-5))
         try:
-            ok, fitted = adjuster.apply(features, pairwise, cameras)
+            ok, fitted = adjuster.apply(features, fit_matches, cameras)
             if not ok:
                 continue
             quality = _alignment_quality(prepared, fitted)
@@ -441,6 +554,16 @@ def _refine_cameras(prepared, on_progress=None):
             best_quality = quality
         if quality['valid']:
             return fitted, {"alignment_method": method, "alignment_recovered": method != 'ray', **quality}
+        if dense and method == 'ray' and quality['median_reprojection_error_px'] is not None:
+            if on_progress:
+                on_progress("Refining consistent camera matches")
+            try:
+                refined = _refine_ray_rotations(prepared, fitted)
+                refined_quality = _alignment_quality(prepared, refined)
+            except (cv2.error, np.linalg.LinAlgError):
+                continue
+            if refined_quality['valid']:
+                return refined, {"alignment_method": "robust_ray", "alignment_recovered": True, **refined_quality}
     if best_quality and best_quality['median_reprojection_error_px'] is not None:
         photos = ', '.join(str(index + 1) for index in best_quality['worst_photo_indices'])
         raise StitchingError(f'Photo alignment is inconsistent; the largest errors involve photos {photos}. Review those photos or add overlapping views, then retry with the saved set.')
@@ -480,10 +603,17 @@ def _camera_canvas_regions(camera, rotation, image_size, width, height):
     return [(left, right, top, bottom)]
 
 
+def _exposure_lookup(gain, *, rounded=False):
+    values = np.clip(np.arange(256, dtype=np.float32)[:, None, None] * gain, 0, 255)
+    if rounded:
+        np.rint(values, out=values)
+    return values.astype(np.uint8)
+
+
 def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progress=None, *, polar_limit=None, find_seams=True):
     """Find content-aware seams on a small spherical preview, one source/pixel.
 
-    Process two canvases at a time so memory does not grow with the photo count.
+    Compare each projected source with the current mosaic.
     Horizontal wrap padding supplies seam context across the panorama boundary.
     """
     owner = np.full((height, width), -1, np.int16)
@@ -509,8 +639,8 @@ def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progr
         if polar_limit is not None:
             valid &= polar <= np.deg2rad(polar_limit)
         mx[~valid], my[~valid] = -1, -1
-        warped = cv2.remap(image, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT).astype(np.float32)
-        sources.append(warped.astype(np.uint8))
+        warped = cv2.remap(image, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        sources.append(warped)
         source_masks.append(valid.astype(np.uint8) * 255)
     gains = np.ones((len(working), 3), np.float32)
     if len(working) > 1:
@@ -527,7 +657,7 @@ def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progr
         return owner, fallbacks, gains
     for index, (source, mask) in enumerate(zip(sources, source_masks)):
         valid = mask > 0
-        warped = np.clip(source.astype(np.float32) * gains[index], 0, 255).astype(np.uint8).astype(np.float32)
+        warped = cv2.LUT(source, _exposure_lookup(gains[index])).astype(np.float32)
         existing = owner >= 0
         take = valid & ~existing
         if np.count_nonzero(valid & existing) >= 32:
@@ -574,6 +704,7 @@ def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fal
         if on_progress:
             on_progress(f"Blending source seams for photo {index + 1} of {len(working)}")
         k, inverse = camera.K(), rotation.T
+        exposure = _exposure_lookup(gains[index], rounded=True)
         for left, right, top, bottom in _camera_canvas_regions(camera, rotation, image.shape[1::-1], width, height):
             bottom = min(bottom, blend_bottom)
             if top >= bottom:
@@ -608,7 +739,7 @@ def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fal
             # does, while the mask still excludes all unsupported pixels.
             mx[z <= 1e-6], my[z <= 1e-6] = 0, 0
             warped = cv2.remap(image, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-            corrected = np.rint(np.clip(warped.astype(np.float32) * gains[index], 0, 255)).astype(np.int16)
+            corrected = cv2.LUT(warped, exposure).astype(np.int16)
             blender.feed(corrected, selected, (left, top))
     blended, mask = blender.blend(None, None)
     result = fallback.copy()
@@ -626,9 +757,8 @@ def _render_spherical_photos(working, cameras, rotations, width=4096, height=204
         seam_height = max(1, round(height * seam_width / width))
         owner, seam_fallbacks, exposure_gains = _seam_ownership(working, cameras, rotations, seam_width, seam_height, on_progress=on_progress, polar_limit=polar_limit, find_seams=seam_mode == "graphcut")
         owner = cv2.resize(owner, (width, height), interpolation=cv2.INTER_NEAREST)
-        chosen = np.zeros((height, width, 3), np.uint8)
         chosen_valid = np.zeros((height, width), bool)
-        fallback = np.zeros_like(chosen)
+        fallback = np.zeros((height, width, 3), np.uint8)
         best_weight = np.zeros((height, width), np.float32)
         fallback_owner = np.full((height, width), -1, np.int16)
         if report is not None:
@@ -645,6 +775,7 @@ def _render_spherical_photos(working, cameras, rotations, width=4096, height=204
         if on_progress:
             on_progress(f"Rendering photo {image_index + 1} of {len(working)}")
         intrinsic, inverse = camera.K().astype(np.float32), rotation.T
+        exposure = _exposure_lookup(exposure_gains[image_index]) if seam_aware else None
         image_height, image_width = image.shape[:2]
         regions = _camera_canvas_regions(camera, rotation, (image_width, image_height), width, height) if bounded else [(0, width, 0, height)]
         if polar_limit is not None:
@@ -676,27 +807,31 @@ def _render_spherical_photos(working, cameras, rotations, width=4096, height=204
                     # or recessed moulding from several slightly different views.
                     interior = valid & (edge > .03 * min(image_width, image_height))
                     weight[interior] += 2 * min(image_width, image_height)
-                map_x[~valid], map_y[~valid] = -1, -1
-                warped = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
                 if seam_aware:
-                    warped = np.clip(warped.astype(np.float32) * exposure_gains[image_index], 0, 255).astype(np.uint8)
-                    # Each output pixel comes from one actual photograph.
-                    # A full-resolution geometric fallback keeps valid boundary
-                    # pixels that a coarse seam preview could not represent.
-                    better = valid & (weight > best_weight[start:end, left:right])
-                    fallback[start:end, left:right][better] = warped[better]
-                    best_weight[start:end, left:right][better] = weight[better]
-                    fallback_owner[start:end, left:right][better] = image_index
-                    selected = valid & (owner[start:end, left:right] == image_index)
-                    chosen[start:end, left:right][selected] = warped[selected]
-                    chosen_valid[start:end, left:right] |= selected
+                    region = np.s_[start:end, left:right]
+                    previous_weight = best_weight[region]
+                    chosen_here = chosen_valid[region]
+                    better = weight > previous_weight
+                    selected = valid & (owner[region] == image_index)
+                    # Keep the strongest valid fallback unless the seam's
+                    # preferred source has already provided this pixel.
+                    update = selected | (better & ~chosen_here)
+                    np.copyto(previous_weight, weight, where=better)
+                    if not np.any(update):
+                        continue
+                    crop_x, crop_y, crop_width, crop_height = cv2.boundingRect(update.view(np.uint8))
+                    crop = np.s_[crop_y:crop_y + crop_height, crop_x:crop_x + crop_width]
+                    warped = cv2.remap(image, map_x[crop], map_y[crop], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+                    np.copyto(fallback[region][crop], cv2.LUT(warped, exposure), where=update[crop][..., None])
+                    fallback_owner[region][update] = image_index
+                    chosen_here |= selected
                 else:
+                    map_x[~valid], map_y[~valid] = -1, -1
+                    warped = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
                     accumulated[start:end, left:right] += warped.astype(np.float32) * weight[:, :, None]
                     weights[start:end, left:right] += weight
     if seam_aware:
-        fallback[chosen_valid] = chosen[chosen_valid]
         evidence = np.where(best_weight > 0, 255, 0).astype(np.uint8)
-        fallback_owner[chosen_valid] = owner[chosen_valid]
         try:
             result = _blend_source_seams(working, cameras, rotations, fallback_owner, evidence, exposure_gains, fallback, on_progress)
         except cv2.error:
@@ -734,7 +869,10 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
                 raise
             if on_progress:
                 on_progress("Expanding overlap search to recover camera alignment")
-            prepared = prepare_spherical_matches([], detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress, prepared=prepared, full_search=True)
+            expanded = prepare_spherical_matches([], detector, norm, ratio_threshold, ransac_threshold, on_progress=on_progress, prepared=prepared, full_search=True)
+            if len(expanded.reports) == len(prepared.reports):
+                raise
+            prepared = expanded
             working, features, pairwise, reports = prepared.working, prepared.features, prepared.pairwise, prepared.reports
             cameras, alignment_report = _refine_cameras(prepared, on_progress)
         # Level using the surrounding ring only: ceiling/floor cameras must not

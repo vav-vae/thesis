@@ -53,6 +53,31 @@ class PanoramaJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.values["job-1"]["stage"], "Checking photo 6")
         self.assertIn("Photos 5 and 6", store.values["job-1"]["error"])
 
+    async def test_processing_timeout_logs_stage_and_saves_a_retryable_failure(self):
+        store = MemoryStore()
+        wait_for = asyncio.wait_for
+
+        async def short_progress_wait(task, timeout):
+            return await wait_for(task, timeout=0.01)
+
+        async def reconstruct(progress):
+            progress("Refining camera alignment")
+            await asyncio.Event().wait()
+
+        with (
+            patch("backend.panorama_jobs.JOB_TIMEOUT_SECONDS", 0),
+            patch("backend.panorama_jobs.asyncio.wait_for", side_effect=short_progress_wait),
+            self.assertLogs("backend.panorama_jobs", level="ERROR") as logs,
+        ):
+            await run_job(store, self.job(), reconstruct)
+
+        snapshot = store.values["job-1"]
+        self.assertEqual(snapshot["code"], "TOUR_JOB_TIMEOUT")
+        self.assertEqual(snapshot["stage"], "Refining camera alignment")
+        self.assertEqual(snapshot["input"], self.job()["input"])
+        self.assertIn("stage=Refining camera alignment code=TOUR_JOB_TIMEOUT", logs.output[0])
+        self.assertIsNone(logs.records[0].exc_info)
+
     async def test_unfinished_worker_expires_but_completed_results_remain_recoverable(self):
         self.assertEqual(job_status(self.job(), now=500)["code"], "TOUR_JOB_EXPIRED")
         self.assertEqual(job_status({**self.job(), "status": "completed"}, now=10000)["status"], "completed")

@@ -9,7 +9,10 @@ import numpy as np
 from backend.services.panorama_service import (
     StitchingError, _detector_and_norm, analyze_image_sequence, reconstruct_hybrid_panorama,
 )
-from backend.services.spherical import _alignment_quality, _refine_cameras, _rotation_condition, prepare_spherical_matches, reconstruct_sphere, spherical_coverage
+from backend.services.spherical import (
+    _alignment_quality, _bundle_adjustment_matches, _refine_cameras, _rotation_condition,
+    prepare_spherical_matches, reconstruct_sphere, spherical_coverage,
+)
 
 
 def camera_sweep(include_poles=False, *, poses=None, width=960, height=720):
@@ -103,6 +106,51 @@ class SphericalTests(unittest.TestCase):
         for camera in cameras:
             camera.R = np.eye(3, dtype=np.float32)
         self.assertFalse(_alignment_quality(prepared, cameras)['valid'])
+
+    def test_fit_sampling_keeps_every_edge_and_preserves_validation_matches(self):
+        cv2.setRNGSeed(42)
+        prepared = prepare_spherical_matches(camera_sweep(), *_detector_and_norm('sift'))
+        self.assertIs(_bundle_adjustment_matches(prepared), prepared.pairwise)
+        count = len(prepared.features)
+        original_counts = [match.num_inliers for match in prepared.pairwise]
+
+        with patch('backend.services.spherical.ALIGNMENT_POINT_BUDGET', 16 * len(prepared.reports)):
+            fit_matches = _bundle_adjustment_matches(prepared)
+
+        for edge in prepared.reports:
+            first, second = edge['from_index'], edge['to_index']
+            forward = fit_matches[first * count + second]
+            reverse = fit_matches[second * count + first]
+            self.assertEqual(forward.num_inliers, min(16, original_counts[first * count + second]))
+            self.assertEqual(forward.num_inliers, reverse.num_inliers)
+            self.assertGreater(forward.confidence, 1.0)
+            np.testing.assert_array_equal(forward.H, prepared.pairwise[first * count + second].H)
+            self.assertEqual(
+                [(point.queryIdx, point.trainIdx) for point in forward.getMatches()],
+                [(point.trainIdx, point.queryIdx) for point in reverse.getMatches()],
+            )
+        self.assertEqual([match.num_inliers for match in prepared.pairwise], original_counts)
+
+    def test_dense_ray_recovery_refines_rotations_and_passes_full_geometry_checks(self):
+        cv2.setRNGSeed(42)
+        prepared = prepare_spherical_matches(camera_sweep(), *_detector_and_norm('sift'))
+        cameras, _ = _refine_cameras(prepared)
+        for index, camera in enumerate(cameras):
+            offset = cv2.Rodrigues(np.array([0., (-1) ** index * .08, 0.], np.float32))[0]
+            camera.R = offset @ camera.R
+        self.assertFalse(_alignment_quality(prepared, cameras)['valid'])
+        solver = Mock()
+        solver.apply.return_value = (True, cameras)
+
+        with (
+            patch('backend.services.spherical.cv2.detail_BundleAdjusterRay', return_value=solver),
+            patch('backend.services.spherical.ALIGNMENT_POINT_BUDGET', 16 * len(prepared.reports)),
+        ):
+            refined, report = _refine_cameras(prepared)
+
+        self.assertEqual(report['alignment_method'], 'robust_ray')
+        self.assertEqual([camera.focal for camera in refined], [camera.focal for camera in cameras])
+        self.assertTrue(_alignment_quality(prepared, refined)['valid'])
 
     def test_exhausted_solvers_never_render_invalid_cameras(self):
         prepared = prepare_spherical_matches(camera_sweep(), *_detector_and_norm('sift'))

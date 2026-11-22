@@ -54,7 +54,7 @@ class MatchingEfficiencyTests(unittest.TestCase):
     def test_camera_failure_restores_deferred_pairs_before_retrying_the_fit(self):
         images = [np.full((240, 320, 3), 120, np.uint8)] * 6
         prepared = SphericalMatches(images, [], [], [], [list(range(6))], [(0, 1)])
-        expanded = SphericalMatches(images, [], [], [], [list(range(6))])
+        expanded = SphericalMatches(images, [], [], [{'from_index': 0, 'to_index': 1}], [list(range(6))])
         cameras = []
         for _ in images:
             camera = cv2.detail.CameraParams()
@@ -72,6 +72,17 @@ class MatchingEfficiencyTests(unittest.TestCase):
         self.assertEqual(refine.call_count, 2)
         self.assertIs(complete.call_args.kwargs['prepared'], prepared)
         self.assertTrue(complete.call_args.kwargs['full_search'])
+
+    def test_camera_failure_is_preserved_when_search_finds_no_new_overlap(self):
+        prepared = SphericalMatches([None] * 6, [], [], [], [list(range(6))], [(0, 1)])
+        expanded = SphericalMatches(prepared.working, [], [], [], prepared.components)
+        with (
+            patch('backend.services.spherical._refine_cameras', side_effect=StitchingError('Photo alignment is inconsistent')) as refine,
+            patch('backend.services.spherical.prepare_spherical_matches', return_value=expanded),
+            self.assertRaisesRegex(StitchingError, 'Photo alignment is inconsistent'),
+        ):
+            reconstruct_sphere([], None, cv2.NORM_L2, .7, 4, prepared=prepared)
+        refine.assert_called_once()
 
     def test_optional_disconnected_photo_only_expands_possible_bridges(self):
         poses = [(i * 360 / 14, 0) for i in range(14)]
