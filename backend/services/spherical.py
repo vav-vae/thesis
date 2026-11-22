@@ -610,7 +610,7 @@ def _exposure_lookup(gain, *, rounded=False):
     return values.astype(np.uint8)
 
 
-def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progress=None, *, polar_limit=None, find_seams=True):
+def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progress=None, *, polar_limit=None, find_seams=True, source_order=None):
     """Find content-aware seams on a small spherical preview, one source/pixel.
 
     Compare each projected source with the current mosaic.
@@ -621,7 +621,6 @@ def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progr
     longitude = ((np.arange(width, dtype=np.float32) + .5) / width * 2 - 1) * np.pi
     polar = (np.arange(height, dtype=np.float32)[:, None] + .5) / height * np.pi
     wx, wy, wz = np.sin(polar) * np.sin(longitude)[None, :], -np.cos(polar), np.sin(polar) * np.cos(longitude)[None, :]
-    finder = cv2.detail_GraphCutSeamFinder('COST_COLOR_GRAD')
     fallbacks = 0
     padding = max(8, width // 8)
     sources, source_masks = [], []
@@ -655,7 +654,13 @@ def _seam_ownership(working, cameras, rotations, width=512, height=256, on_progr
             fallbacks += 1
     if not find_seams:
         return owner, fallbacks, gains
-    for index, (source, mask) in enumerate(zip(sources, source_masks)):
+    # Gradient weighting can make a cut through a textured foreground object
+    # cheap even when the two projections show different parts of it.
+    seam_cost = 'COST_COLOR_GRAD' if source_order is None else 'COST_COLOR'
+    finder = cv2.detail_GraphCutSeamFinder(seam_cost)
+    order = range(len(sources)) if source_order is None else source_order
+    for index in order:
+        source, mask = sources[index], source_masks[index]
         valid = mask > 0
         warped = cv2.LUT(source, _exposure_lookup(gains[index])).astype(np.float32)
         existing = owner >= 0
@@ -749,20 +754,34 @@ def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fal
     return result
 
 
-def _render_spherical_photos(working, cameras, rotations, width=4096, height=2048, on_progress=None, *, bounded=True, seam_aware=False, report=None, polar_limit=None, seam_mode="graphcut", reference_index=None):
+def _render_spherical_photos(working, cameras, rotations, width=4096, height=2048, on_progress=None, *, bounded=True, seam_aware=False, report=None, polar_limit=None, seam_mode="graphcut", reference_index=None, capture_views=None):
     if seam_aware:
         # Keep large-set memory bounded while selecting seams at twice the
         # former resolution. Do not upsample small diagnostic renders first.
         seam_width = min(1024, width)
         seam_height = max(1, round(height * seam_width / width))
-        owner, seam_fallbacks, exposure_gains = _seam_ownership(working, cameras, rotations, seam_width, seam_height, on_progress=on_progress, polar_limit=polar_limit, find_seams=seam_mode == "graphcut")
+        source_order = None
+        if capture_views and len(capture_views) == len(working) and 'around' in capture_views and any(view != 'around' for view in capture_views):
+            # Start the seam mosaic with the directed views, where fixtures can
+            # be fully visible, and add the surrounding ring afterward. Work
+            # back through each group because sequential cuts retain existing
+            # detail when a later comparison has no better overlap.
+            source_order = sorted(range(len(working)), key=lambda index: (capture_views[index] == 'around', -index))
+        owner, seam_fallbacks, exposure_gains = _seam_ownership(
+            working, cameras, rotations, seam_width, seam_height, on_progress=on_progress,
+            polar_limit=polar_limit, find_seams=seam_mode == "graphcut", source_order=source_order,
+        )
         owner = cv2.resize(owner, (width, height), interpolation=cv2.INTER_NEAREST)
         chosen_valid = np.zeros((height, width), bool)
         fallback = np.zeros((height, width, 3), np.uint8)
         best_weight = np.zeros((height, width), np.float32)
         fallback_owner = np.full((height, width), -1, np.int16)
         if report is not None:
-            report.update(renderer_version='spherical-ceiling-v3', blending_method=f'{seam_mode}_multiband', seam_resolution=[seam_width, seam_height], seam_fallbacks=seam_fallbacks, exposure_gains=exposure_gains.tolist())
+            report.update(
+                renderer_version='spherical-ceiling-v4' if source_order is not None else 'spherical-ceiling-v3',
+                blending_method=f'{seam_mode}_multiband', seam_resolution=[seam_width, seam_height],
+                seam_fallbacks=seam_fallbacks, exposure_gains=exposure_gains.tolist(),
+            )
     else:
         accumulated = np.zeros((height, width, 3), np.float32)
         weights = np.zeros((height, width), np.float32)
@@ -890,7 +909,10 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
         render_started = perf_counter()
         width, height = 4096, 2048
         render_report = {}
-        panorama, evidence, render_samples = _render_spherical_photos(working, cameras, rotations, width, height, on_progress, seam_aware=True, report=render_report)
+        panorama, evidence, render_samples = _render_spherical_photos(
+            working, cameras, rotations, width, height, on_progress, seam_aware=True,
+            report=render_report, capture_views=capture_views,
+        )
         from .ceiling import correct_ceiling
         panorama, evidence, ceiling_report = correct_ceiling(prepared, cameras, rotations, capture_views, panorama, evidence, on_progress)
         render_report['ceiling_alignment'] = ceiling_report

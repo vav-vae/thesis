@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 import cv2
 import numpy as np
-from backend.services.spherical import _blend_source_seams, _render_spherical_photos, prepare_spherical_matches
+from backend.services.spherical import _blend_source_seams, _render_spherical_photos, _seam_ownership, prepare_spherical_matches
 from backend.services.panorama_service import _detector_and_norm
 from backend.tests.test_spherical import camera_sweep
 
@@ -54,6 +54,28 @@ class SphericalRenderTests(unittest.TestCase):
                                  1200, 600, seam_aware=True, report=report)
         self.assertEqual(report['seam_resolution'], [1024, 512])
         self.assertEqual(report['renderer_version'], 'spherical-ceiling-v3')
+
+    def test_guided_detail_views_are_composited_before_the_surrounding_ring(self):
+        camera = cv2.detail.CameraParams()
+        camera.focal, camera.aspect, camera.ppx, camera.ppy = 80., 1., 60., 45.
+        images = [np.full((90, 120, 3), pixel, np.uint8) for pixel in (90, 100, 110, 120)]
+        rotations = [cv2.Rodrigues(np.float64([pitch, 0, 0]))[0].astype(np.float32) for pitch in (0, .5, .1, -.5)]
+        report = {}
+        arguments = (images, [camera] * len(images), rotations, 360, 180)
+
+        with (
+            patch('backend.services.spherical._seam_ownership', wraps=_seam_ownership) as seams,
+            patch('backend.services.spherical.cv2.detail_GraphCutSeamFinder', wraps=cv2.detail_GraphCutSeamFinder) as finder,
+        ):
+            _, guided_evidence, _ = _render_spherical_photos(
+                *arguments, seam_aware=True, report=report, capture_views=['around', 'top', 'around', 'bottom'],
+            )
+
+        _, original_evidence, _ = _render_spherical_photos(*arguments, seam_aware=True)
+        self.assertEqual(seams.call_args.kwargs['source_order'], [3, 1, 2, 0])
+        finder.assert_called_once_with('COST_COLOR')
+        self.assertEqual(report['renderer_version'], 'spherical-ceiling-v4')
+        np.testing.assert_array_equal(guided_evidence, original_evidence)
 
     def test_cropped_blending_preserves_full_region_output(self):
         random = np.random.default_rng(7)
