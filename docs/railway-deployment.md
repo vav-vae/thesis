@@ -12,6 +12,17 @@ Railway URL, credentials, CORS, and a real panorama have been checked.
 
 ## Railway service
 
+For large live-capture sets on the current Railway service, set
+`PANORAMA_MAX_TOTAL_IMAGE_PIXELS=32000000`. The API distributes this working
+pixel budget across the remote source photos before matching. A 53-photo
+1600x1200 set is processed at approximately 897x672 per photo, retaining every
+photo and the original Cloudinary uploads. This reduces the decoded image
+arrays from approximately 300 MB to 96 MB, excluding temporary OpenCV memory.
+Smaller working images can reduce fine detail and change alignment results.
+The 53-photo failure showed a worker restart without a final saved result;
+memory exhaustion is suspected, not established by an explicit OOM log.
+Validate the saved capture again after applying the setting.
+
 1. Use the existing GitHub repository `vav-vae/thesis`, branch `main`.
 2. Create a Python backend service with **Root Directory** `/backend` and
    **Config File** `/backend/railway.json`. Railway's config file path is
