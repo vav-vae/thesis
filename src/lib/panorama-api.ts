@@ -1,4 +1,5 @@
 import { auth } from "@/lib/firebase";
+import { backendUrl } from "./backend-url";
 import { HttpResponseError, readJsonResponse } from "./http-response";
 import { readProgressStream } from "./progress-stream";
 import type { CaptureView } from "./capture-guide";
@@ -102,8 +103,10 @@ export function tourGenerationResult(job: TourGenerationJob): HybridReconstructi
   return { panoramaUrl: resolveAssetUrl(job.result.panorama_url), aiMaskUrl: resolveAssetUrl(job.result.ai_mask_url), metadata: job.result.metadata };
 }
 
-export const PANORAMA_API_URL = process.env.NEXT_PUBLIC_PANORAMA_API_URL
-  || (process.env.NODE_ENV === "production" ? "/api/backend" : "http://127.0.0.1:8000");
+export const PANORAMA_API_URL = backendUrl(
+  process.env.NEXT_PUBLIC_PANORAMA_API_URL,
+  process.env.NODE_ENV === "production",
+);
 
 const BUSY_RETRY_LIMIT = 6;
 const BUSY_RETRY_SECONDS = 5;

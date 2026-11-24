@@ -1,5 +1,9 @@
 # Python backend packaging
 
+For the Railway migration and its verified cutover procedure, see
+[railway-deployment.md](railway-deployment.md). The notes below describe the
+legacy Vercel backend retained until Railway is ready.
+
 The `libot` Vercel project builds `backend/main.py` with Python dependencies
 bundled at build time. Keep these non-secret project environment variables set
 to `1` for Production and Preview, then redeploy after changing them:

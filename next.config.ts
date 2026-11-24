@@ -1,12 +1,16 @@
 import type { NextConfig } from "next";
+import { backendUrl } from "./src/lib/backend-url.ts";
 
 const isProduction = process.env.NODE_ENV === "production";
+const panoramaApiUrl = backendUrl(process.env.NEXT_PUBLIC_PANORAMA_API_URL, isProduction);
+const backendOrigins = panoramaApiUrl.startsWith("/") ? [] : [new URL(panoramaApiUrl).origin];
 const contentSecurityPolicy = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isProduction ? "" : " 'unsafe-eval'"} https://www.googletagmanager.com`,
   "style-src 'self' 'unsafe-inline'",
   [
     "img-src 'self' blob: data:",
+    ...backendOrigins,
     "https://images.unsplash.com",
     "https://res.cloudinary.com",
     "https://firebasestorage.googleapis.com",
@@ -18,6 +22,7 @@ const contentSecurityPolicy = [
   "font-src 'self' data:",
   [
     "connect-src 'self'",
+    ...backendOrigins,
     ...(isProduction
       ? []
       : [
@@ -66,6 +71,14 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  async rewrites() {
+    // Keep old browser bundles using /api/backend working after the cutover.
+    // This is a routing proxy, not a Next.js function running the Python work.
+    return backendOrigins.length ? [{
+      source: "/api/backend/:path*",
+      destination: `${panoramaApiUrl}/:path*`,
+    }] : [];
+  },
   async headers() {
     return [
       {

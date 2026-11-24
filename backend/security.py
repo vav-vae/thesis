@@ -272,9 +272,14 @@ def _client_ip(scope: Scope, *, trust_proxy_headers: bool) -> str:
     headers = Headers(scope=scope)
     candidates: list[str] = []
     if trust_proxy_headers:
-        forwarded = headers.get("x-forwarded-for", "")
-        if forwarded:
-            candidates.append(forwarded.split(",", 1)[0].strip())
+        if os.getenv("RAILWAY_PROJECT_ID"):
+            # Railway's public HTTP ingress replaces this header. Never trust
+            # an arbitrary X-Forwarded-For chain or allow TCP ingress here.
+            candidates.append(headers.get("x-real-ip", "").strip())
+        else:
+            forwarded = headers.get("x-forwarded-for", "")
+            if forwarded:
+                candidates.append(forwarded.split(",", 1)[0].strip())
     client = scope.get("client")
     if client:
         candidates.append(str(client[0]))

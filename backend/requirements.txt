@@ -1,6 +1,6 @@
 fastapi>=0.104,<1.0
 pydantic>=2.9,<3.0
-# Vercel supplies the ASGI server; local development needs only base uvicorn.
+# Railway runs the API with base uvicorn; no development reload extras needed.
 uvicorn>=0.24,<1.0
 numpy>=2.0,<3.0
 opencv-python-headless==4.14.0.94
