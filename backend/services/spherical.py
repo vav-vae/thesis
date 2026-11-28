@@ -881,8 +881,8 @@ def _render_spherical_photos(working, cameras, rotations, width=4096, height=204
 def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold, *, prepared: SphericalMatches | None = None, capture_views=None, on_progress: Callable[[str], None] | None = None):
     """Estimate camera rotations jointly, then feather onto a true 360 x 180 canvas.
 
-    Working images are bounded to 1600px; output is 4096x2048. Unlike a planar
-    mosaic, longitude wraps and uncaptured ceiling/floor pixels remain masked.
+    Working images are bounded to 1600px. The spherical output wraps in
+    longitude and leaves uncaptured ceiling/floor pixels masked.
     """
     from .panorama_service import StitchingError
 
@@ -923,7 +923,11 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
             rotations = cv2.detail.waveCorrect([c.R for c in cameras], cv2.detail.WAVE_CORRECT_HORIZ)
         camera_estimation_ms = round((perf_counter() - started) * 1000, 2)
         render_started = perf_counter()
-        width, height = 4096, 2048
+        # Large captures retain dozens of decoded source images alongside the
+        # OpenCV pyramids. Halve both canvas dimensions to quarter the
+        # per-pixel allocations for blending and ceiling correction.
+        width = 2048 if len(working) >= 48 else 4096
+        height = width // 2
         render_report = {}
         panorama, evidence, render_samples = _render_spherical_photos(
             working, cameras, rotations, width, height, on_progress, seam_aware=True,
@@ -939,6 +943,7 @@ def reconstruct_sphere(images, detector, norm, ratio_threshold, ransac_threshold
         **render_report,
         'matching_report': getattr(prepared, 'matching_stats', {}),
         'working_max_dimension': 1600,
+        'render_resolution': [width, height],
         'render_sample_count': render_samples,
         'render_full_sample_count': width * height * len(working),
         'focal_lengths': [round(c.focal, 2) for c in cameras],
