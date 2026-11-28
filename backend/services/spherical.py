@@ -729,29 +729,39 @@ def _blend_source_seams(working, cameras, rotations, owner, evidence, gains, fal
                 crop_bottom = min(bottom, ((top + y0 + crop_height + context + grid - 1) // grid) * grid)
                 selected = selected[crop_top - top:crop_bottom - top, crop_left - left:crop_right - left].copy()
                 left, right, top, bottom = crop_left, crop_right, crop_top, crop_bottom
-            wx, wy, wz = sin_polar[top:bottom] * sin_lon[:, left:right], -cos_polar[top:bottom], sin_polar[top:bottom] * cos_lon[:, left:right]
-            x = inverse[0, 0] * wx + inverse[0, 1] * wy + inverse[0, 2] * wz
-            y = inverse[1, 0] * wx + inverse[1, 1] * wy + inverse[1, 2] * wz
-            z = inverse[2, 0] * wx + inverse[2, 1] * wy + inverse[2, 2] * wz
-            denominator = np.where(z > 1e-6, z, 1)
-            mx = (k[0, 0] * x / denominator + k[0, 2]).astype(np.float32)
-            my = (k[1, 1] * y / denominator + k[1, 2]).astype(np.float32)
-            valid = (z > 1e-6) & (mx >= 0) & (my >= 0) & (mx <= image.shape[1] - 1) & (my <= image.shape[0] - 1)
-            selected[~valid] = 0
             # A Laplacian pyramid reads image colours beyond its zero mask.
             # Black padding creates bright/dark source-shaped halos on ceilings.
             # Reflect colours at the photo border, as OpenCV's stitching pipeline
             # does, while the mask still excludes all unsupported pixels.
-            mx[z <= 1e-6], my[z <= 1e-6] = 0, 0
-            warped = cv2.remap(image, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-            corrected = cv2.LUT(warped, exposure).astype(np.int16)
+            corrected = np.empty((bottom - top, right - left, 3), dtype=np.int16)
+            for start in range(top, bottom, 128):
+                end = min(start + 128, bottom)
+                rows = slice(start - top, end - top)
+                wx = sin_polar[start:end] * sin_lon[:, left:right]
+                wy = -cos_polar[start:end]
+                wz = sin_polar[start:end] * cos_lon[:, left:right]
+                x = inverse[0, 0] * wx + inverse[0, 1] * wy + inverse[0, 2] * wz
+                y = inverse[1, 0] * wx + inverse[1, 1] * wy + inverse[1, 2] * wz
+                z = inverse[2, 0] * wx + inverse[2, 1] * wy + inverse[2, 2] * wz
+                front = z > 1e-6
+                denominator = np.where(front, z, 1)
+                mx = (k[0, 0] * x / denominator + k[0, 2]).astype(np.float32)
+                my = (k[1, 1] * y / denominator + k[1, 2]).astype(np.float32)
+                valid = front & (mx >= 0) & (my >= 0) & (mx <= image.shape[1] - 1) & (my <= image.shape[0] - 1)
+                selected[rows][~valid] = 0
+                mx[~front], my[~front] = 0, 0
+                warped = cv2.remap(image, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+                corrected[rows] = cv2.LUT(warped, exposure)
             blender.feed(corrected, selected, (left, top))
+            del corrected
     blended, mask = blender.blend(None, None)
-    result = fallback.copy()
-    use = (mask > 0) & (evidence[:blend_bottom] > 0)
-    result[:blend_bottom][use] = np.clip(blended[use], 0, 255).astype(np.uint8)
-    result[evidence == 0] = 0
-    return result
+    # Convert and merge in strips to avoid full-canvas indexed RGB copies.
+    for top in range(0, blend_bottom, 128):
+        bottom = min(top + 128, blend_bottom)
+        use = (mask[top:bottom] > 0) & (evidence[top:bottom] > 0)
+        colors = np.clip(blended[top:bottom], 0, 255).astype(np.uint8)
+        np.copyto(fallback[top:bottom], colors, where=use[..., None])
+    return fallback
 
 
 def _render_spherical_photos(working, cameras, rotations, width=4096, height=2048, on_progress=None, *, bounded=True, seam_aware=False, report=None, polar_limit=None, seam_mode="graphcut", reference_index=None, capture_views=None):
@@ -850,7 +860,13 @@ def _render_spherical_photos(working, cameras, rotations, width=4096, height=204
                     accumulated[start:end, left:right] += warped.astype(np.float32) * weight[:, :, None]
                     weights[start:end, left:right] += weight
     if seam_aware:
-        evidence = np.where(best_weight > 0, 255, 0).astype(np.uint8)
+        # A pixel has evidence exactly when a source was selected for it.
+        # Release the selection buffers before OpenCV allocates its pyramids.
+        evidence = (fallback_owner >= 0).astype(np.uint8)
+        evidence *= 255
+        del owner, chosen_valid, best_weight
+        # These sliced views also keep their original full buffers alive.
+        previous_weight = chosen_here = None
         try:
             result = _blend_source_seams(working, cameras, rotations, fallback_owner, evidence, exposure_gains, fallback, on_progress)
         except cv2.error:
